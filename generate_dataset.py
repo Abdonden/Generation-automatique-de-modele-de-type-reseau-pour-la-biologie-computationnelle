@@ -5,7 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 import os
 
 # Répertoires où se trouvent les fichiers de données
-FEATURES_DIR = "features"
+FEATURES_DIR = "featuress"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
 
@@ -85,10 +85,10 @@ if __name__ == "__main__":
     # Récupérer tous les modèles automatiquement
     model_ids = get_available_model_ids()  # <- ça charge tous les modèles disponibles automatiquement
 
-    print(f"📦 Modèles trouvés : {[str(mid).zfill(4) for mid in model_ids]}")
+    print(f" Modèles trouvés : {[str(mid).zfill(4) for mid in model_ids]}")
 
     triplets = lister_les_triplets(model_ids)
-    print("\n📄 Liste des triplets disponibles :")
+    print("\n Liste des triplets disponibles :")
     for triplet in triplets:
         print(f" - {triplet}")
 
@@ -100,16 +100,19 @@ if __name__ == "__main__":
     # On récupère le seul batch du DataLoader (contenant tout le dataset)
     batch = next(iter(dataloader))
 
-    print("\n📊 Contenu complet du dataset chargé en batch :")
+    print("\n Contenu complet du dataset chargé en batch :")
     for i in range(len(batch["model_id"])):
-        print(f"\n🔢 Modèle {i+1}")
+        print(f"\n Modèle {i+1}")
         print(f" - Model ID: {batch['model_id'][i]}")
-        print(f"   Features shape: {batch['features'][i].shape}")
+        #print(f"   Features shape: {batch['features'][i].shape}")
+        print("   Features shapes (par espèce) :")
+        for j, esp in enumerate(batch["features"][i]):
+            print(f"     - Espèce {j} : {esp.shape}")
         print(f"   edges shape: {batch['edges'][i].shape}")
         print(f"   # Interactions: {len(batch['interactions'][i])}")
         # Tu peux décommenter la ligne suivante si tu veux voir les interactions elles-mêmes
-        # print(f"   Interactions: {batch['interactions'][i]}")  
+        print(f"   Interactions: {batch['interactions'][i]}")  
 
-    # ✅ Sauvegarde du batch complet dans un fichier .pt pour usage ultérieur
+    #  Sauvegarde du batch complet dans un fichier .pt pour usage ultérieur
     torch.save(batch, "dataset_complet.pt")
-    print("\n💾 Batch complet sauvegardé dans 'dataset_complet.pt'")
+    print("\n Batch complet sauvegardé dans 'dataset_complet.pt'")
