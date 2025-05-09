@@ -4,7 +4,7 @@ let
   pkgs = import <nixpkgs> {
 			config = {
 				allowUnfree = true;
-				#cudaSupport = true;
+				cudaSupport = true;
 				};
 			};
   diffrax = pkgs.callPackage ./diffrax.nix {pkgs=pkgs;};
@@ -29,7 +29,11 @@ in pkgs.mkShell {
     pkgs.python312Packages.lineax
     pkgs.python312Packages.optimistix
     pkgs.python312Packages.torch-geometric
-    pkgs.python312Packages.torch
+    pkgs.python312Packages.torch-bin
+    pkgs.python312Packages.torchWithCuda
+    pkgs.cudaPackages.cudnn
+    pkgs.cudatoolkit
+    #pkgs.python312Packages.torch
     pkgs.python312Packages.matplotlib
 
 
@@ -48,6 +52,10 @@ in pkgs.mkShell {
   shellHook = ''
     # Tells pip to put packages into $PIP_PREFIX instead of the usual locations.
     # See https://pip.pypa.io/en/stable/user_guide/#environment-variables.
+      export CUDA_PATH=${pkgs.cudatoolkit}
+      # export LD_LIBRARY_PATH=${pkgs.linuxPackages.nvidia_x11}/lib:${pkgs.ncurses5}/lib
+      export EXTRA_LDFLAGS="-L/lib -L${pkgs.linuxPackages.nvidia_x11}/lib"
+    export EXTRA_CCFLAGS="-I/usr/include"
     export EXTRA_CCFLAGS="-I/usr/include"
     export PIP_PREFIX=$(pwd)/_build/pip_packages
     export PYTHONPATH="$PIP_PREFIX/${pkgs.python312.sitePackages}:$(pwd)/CRNTools/:$PYTHONPATH"
