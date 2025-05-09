@@ -12,17 +12,21 @@ class GCN(torch.nn.Module):
         self.conv2 = GCNConv(out_channels, out_channels)
         self.conv3 = GCNConv(out_channels, out_channels)
         self.conv4 = GCNConv(out_channels, out_channels)
-
+        self.conv5 = GCNConv(out_channels, out_channels)
         # Paramètre entraînable W pour la fonction de score
         self.W = nn.Parameter(torch.randn(num_embeddings, out_channels))
 
     def forward(self, x, edge_index):
         # x: (N, 5, 256) -> flatten to (N*5, 256)    Aplatis x de (N, 5, 256) à (N*5, 256) pour appliquer la GCN.
         x = x.view(-1, x.size(-1))  # (N*5, 256)
+        mean = x.mean(dim=0, keepdim=True)       # (1, 256)
+        std = x.std(dim=0, keepdim=True) + 1e-6  # (1, 256)
+        x = (x - mean) / std  
         x = F.relu(self.conv1(x, edge_index))
         x = F.relu(self.conv2(x, edge_index))
         x = F.relu(self.conv3(x, edge_index))
-        x = self.conv4(x, edge_index)
+        x = F.relu(self.conv4(x, edge_index))
+        x = self.conv5(x, edge_index)
         # Output: Reforme x de (N*5, 512) vers (N, 5, 512) → pour obtenir 5 embeddings par espèce.
         x_out = x.view(-1, 5, x.size(-1))  
         return x_out
@@ -56,8 +60,8 @@ num_models = len(batch["model_id"])
 
 # === Instanciation du modèle et optimiseur ===
 model_gcn = GCN()
-optimizer = torch.optim.Adam(model_gcn.parameters(), lr=0.000001, weight_decay=1e-4)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1000, verbose=True)
+optimizer = torch.optim.Adam(model_gcn.parameters(), lr=0.00001)
+# scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1000, verbose=True)
 # === Préparation des données ===
 batch_data = []
 interaction_indices_batch = []
@@ -92,7 +96,7 @@ patience = 5000
 best_loss = float('inf')
 epochs_without_improvement = 0
 
-for epoch in range(200000):
+for epoch in range(100000):
     model_gcn.train()
     optimizer.zero_grad()
 
@@ -108,7 +112,7 @@ for epoch in range(200000):
     avg_loss = total_loss / num_models
     avg_loss.backward()
     optimizer.step()
-    scheduler.step(avg_loss)
+    # scheduler.step(avg_loss)
 
     # Logs
     if epoch % 500 == 0:
