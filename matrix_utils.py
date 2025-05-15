@@ -27,13 +27,14 @@ def generer_matrix(nom_fichier, model_id):
 # cette ligne crée un dictionnaire species dont :Clé = l'identifiant (string) de chaque espèce (par ex : "ATP", "glucose", etc.)
 #                                               :Valeur = un numéro unique (son index dans la liste)
 #enumerate(...)  donne un index i pour chaque espèce s   s.getId() donne son nom (ou ID)
-    species = {s.getId(): i for i, s in enumerate(model.getListOfSpecies())}
+    species = {s.getId(): i for i, s in enumerate(model.getListOfSpecies()) if not(s.getBoundaryCondition())}
 
 # Trie les nœuds dans l'ordre de leurs indices.
     ordered_nodes = [s for s, idx in sorted(species.items(), key=lambda x: x[1])]
 # Initialise un graphe NetworkX et y ajoute les nœuds.
     G = nx.Graph()
     G.add_nodes_from(ordered_nodes)
+    print ("NODES=", ordered_nodes)
 #interactions : stocke les paires (réactif, produit)
 #connected_species : espèces connectées à au moins une autre.
     interactions = []
@@ -44,17 +45,22 @@ def generer_matrix(nom_fichier, model_id):
         products = [p.getSpecies() for p in reaction.getListOfProducts()]
         for r in reactants:
             for p in products:
-                interactions.append([r, p])
-                G.add_edge(r, p)
-                connected_species.update([r, p])
+                if r in species.keys() and p in species.keys(): 
 
-    # Ajouter les espèces isolées
-    isolated_species = set(species.keys()) - connected_species
-    for s in isolated_species:
-        G.add_node(s)
+                    print ("AJOUT : ", r, " => ", p)
+                    interactions.append([r, p])
+                    G.add_edge(r, p)
+                    connected_species.update([r, p])
+
+#    # Ajouter les espèces isolées
+#    isolated_species = set(species.keys()) - connected_species
+#    for s in isolated_species:
+#        if s in species.keys():
+#            G.add_node(s)
 
 #Donne un index à chaque nœud.
     mapping = {node: i for i, node in enumerate(ordered_nodes)}
+    print ("MAPPING=",mapping)
     edge_list = []
 #Crée des arêtes bidirectionnelles (non orienté).
     for source, target in G.edges():
@@ -70,8 +76,8 @@ def generer_matrix(nom_fichier, model_id):
 #Stocke les paires d’espèces interagissantes sous forme d’indices.
     interaction_indices = []
     for source, target in interactions:
-        idx1 = species[source]
-        idx2 = species[target]
+        idx1 = mapping[source]
+        idx2 = mapping[target]
         pair = [str(idx1), str(idx2)]
         interaction_indices.append(pair)
 
@@ -93,16 +99,16 @@ def generer_matrix(nom_fichier, model_id):
 
 # Liste des fichiers SBML à traiter
 fichiers = [
-    "biomodels/BIOMD0000000001.xml",
+    "biomodels/BIOMD0000000016.xml",
     "biomodels/BIOMD0000000002.xml",
-    "biomodels/BIOMD0000000050.xml",
-    "biomodels/BIOMD0000000060.xml",
-    "biomodels/BIOMD0000000080.xml",
-    "biomodels/BIOMD0000000085.xml",
-    "biomodels/BIOMD0000000086.xml",
-    "biomodels/BIOMD0000000087.xml",
-    "biomodels/BIOMD0000000040.xml",
-    "biomodels/BIOMD0000000017.xml"
+    "biomodels/BIOMD0000000011.xml",
+    "biomodels/BIOMD0000000004.xml",
+    "biomodels/BIOMD0000000005.xml",
+    "biomodels/BIOMD0000000013.xml",
+    "biomodels/BIOMD0000000007.xml",
+    "biomodels/BIOMD0000000008.xml",
+    "biomodels/BIOMD0000000009.xml",
+    "biomodels/BIOMD0000000010.xml"
 ]
 
 # Traitement de chaque fichier
@@ -115,3 +121,8 @@ for fichier in fichiers:
         generer_matrix(fichier, model_id)
     else:
         print(f"⚠️ Impossible d'extraire l'ID du modèle depuis : {fichier}")
+
+
+
+print ("FINAL")
+generer_matrix("biomodels/BIOMD0000000007.xml",7)
