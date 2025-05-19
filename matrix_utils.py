@@ -9,6 +9,7 @@ import os                      # Pour les opérations système (création de dos
 def pad_model_id(model_id):
     """Formate l'ID sur 4 chiffres pour un nom de fichier homogène."""
     return f"{int(model_id):04d}"
+
 # Fonction principale de traitement de fichier SBML
 def generer_matrix(nom_fichier, model_id):
 # Affiche le fichier en cours de traitement.
@@ -47,7 +48,7 @@ def generer_matrix(nom_fichier, model_id):
             for p in products:
                 if r in species.keys() and p in species.keys(): 
 
-                    print ("AJOUT : ", r, " => ", p)
+                   # print ("AJOUT : ", r, " => ", p)
                     interactions.append([r, p])
                     G.add_edge(r, p)
                     connected_species.update([r, p])
@@ -60,7 +61,7 @@ def generer_matrix(nom_fichier, model_id):
 
 #Donne un index à chaque nœud.
     mapping = {node: i for i, node in enumerate(ordered_nodes)}
-    print ("MAPPING=",mapping)
+   # print ("MAPPING=",mapping)
     edge_list = []
 #Crée des arêtes bidirectionnelles (non orienté).
     for source, target in G.edges():
@@ -97,32 +98,46 @@ def generer_matrix(nom_fichier, model_id):
     print(f" - interactions/interaction_indices_{model_id_str}.pt")
 
 
-# Liste des fichiers SBML à traiter
-fichiers = [
-    "biomodels/BIOMD0000000016.xml",
-    "biomodels/BIOMD0000000002.xml",
-    "biomodels/BIOMD0000000011.xml",
-    "biomodels/BIOMD0000000004.xml",
-    "biomodels/BIOMD0000000005.xml",
-    "biomodels/BIOMD0000000013.xml",
-    "biomodels/BIOMD0000000007.xml",
-    "biomodels/BIOMD0000000008.xml",
-    "biomodels/BIOMD0000000009.xml",
-    "biomodels/BIOMD0000000010.xml"
-]
-
-# Traitement de chaque fichier
+# Liste automatique des 100 premiers fichiers SBML à traiter
 #Extrait l’ID numérique avec regex.
 #Appelle generer_matrix si l’ID est trouvé
-for fichier in fichiers:
+
+# Dossier contenant les fichiers SBML
+dossier_sbml = "biomodels"
+
+# Récupère tous les fichiers .xml dans le dossier
+tous_les_fichiers = [
+    os.path.join(dossier_sbml, f)
+    for f in os.listdir(dossier_sbml)
+    if f.endswith(".xml") and f.startswith("BIOMD")
+]
+
+# Trie les fichiers par ID numérique extrait avec regex
+fichiers_tries = sorted(
+    tous_les_fichiers,
+    key=lambda x: int(re.search(r'BIOMD0*(\d+)', x).group(1))
+)
+
+# Garde les 100 premiers fichiers
+fichiers_a_traiter = fichiers_tries[:204]
+
+# Traitement
+for fichier in fichiers_a_traiter:
     match = re.search(r'BIOMD0*(\d+)', fichier)
     if match:
-        model_id = int(match.group(1))  # Extrait 1, 85, etc.
+        model_id = int(match.group(1))  
         generer_matrix(fichier, model_id)
     else:
         print(f"⚠️ Impossible d'extraire l'ID du modèle depuis : {fichier}")
 
+#print ("FINAL")
+#generer_matrix("biomodels/BIOMD0000000007.xml",7)
 
 
-print ("FINAL")
-generer_matrix("biomodels/BIOMD0000000007.xml",7)
+
+
+
+
+
+ 
+  

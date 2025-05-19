@@ -6,7 +6,7 @@ from torch_geometric.data import Data
 import os
 
 # Répertoires où se trouvent les fichiers de données
-FEATURES_DIR = "features"
+FEATURES_DIR = "features/constant_size"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
 
@@ -42,7 +42,7 @@ class CRNDataset(Dataset):
         interactions_path = os.path.join(INTERACTIONS_DIR, f"interaction_indices_{model_id_str}.pt")
 
         features = torch.load(features_path, weights_only=True)
-        features = torch.log(features)
+        #features = torch.log(features)
         edges = torch.load(edges_path, weights_only=True)
         interactions = torch.load(interactions_path, weights_only=True)
         interactions = torch.tensor([[int(i), int(j)] for i, j in interactions])
@@ -77,6 +77,17 @@ def lister_les_triplets(model_ids):
         triplets.append(triplet)
     return triplets
 
+def check_if_edge_exists (edge, interaction_indices):
+    """
+        Vérifie si un arc est déjà présent dans la liste des indices (slow mais bon)
+    """
+
+    for i in range(len(interaction_indices)):
+        e = interaction_indices[i]
+        if e[0] == edge[0] and e[1] == edge[1]:
+            return True
+    return False
+    
 if __name__ == "__main__":
     # Récupérer tous les modèles automatiquement
     model_ids = get_available_model_ids()
@@ -94,14 +105,42 @@ if __name__ == "__main__":
 
     # Transformation en Data (PyG) et sauvegarde
     datas = []
+    tot_0, tot_1 = 0,0
     for i in range(len(dataset)):
-        entry = dataset[i]
-        feats = entry["features"]
-        edges = entry["edges"]
-        target = entry["interactions"]
+        try:
+            entry = dataset[i]
+            feats = entry["features"]
+            edges = entry["edges"]
+            target = entry["interactions"]
+            n_target = []
+            for j in range(len(target)):
+                src, dst = target[j][0], target[j][1]
 
-        data = Data(x=feats, edge_index=edges, y=target)
-        datas.append(data)
+                n_edge = torch.tensor([src,dst,1])
+                inverse = torch.tensor([dst,src])
+                n_target.append(n_edge)
+                if not(check_if_edge_exists(inverse, target)):
+                   n_target.append(torch.tensor([dst,src,0]))
+            
+            n_target = torch.stack(n_target)
+            nb_1 = (n_target[:,-1] == 1).sum()
+            nb_0 = (n_target[:,-1] == 0).sum()
+            assert len(n_target) == (nb_0+nb_1), "error: n_target != nb_0 + nb_1"
+            tot_0 += nb_0
+            tot_1 += nb_1
+
+
+
+
+            data = Data(x=feats, edge_index=edges, y=n_target)
+            datas.append(data)
+        except:
+            print ("Skipping ", i)
+
 
     torch.save(datas, "dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")
+    print ("Total size= ",len(datas))
+    print ("mean=",dataset.mean, " std=", dataset.std)
+    print ("tot_0=", tot_0, " tot_1=", tot_1)
+

@@ -31,6 +31,7 @@ in pkgs.mkShell {
     pkgs.python312Packages.torch-geometric
     pkgs.python312Packages.torch-bin
     pkgs.python312Packages.torchWithCuda
+    pkgs.python312Packages.tensorboard
     pkgs.cudaPackages.cudnn
     pkgs.cudatoolkit
     #pkgs.python312Packages.torch
