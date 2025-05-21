@@ -5,12 +5,86 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GATv2Conv
 from torch_geometric.loader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 device = torch.device("cuda:0") #processeur = cpu, carte graphique = cuda
 #device = torch.device("cpu")
 
 writer = SummaryWriter(comment="")
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-torch.log(torch.tensor(10000.0)) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        Arguments:
+            x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
+        """
+        x = x.transpose(0,1)
+        x = x + self.pe[:x.size(0)]
+        x = x.transpose(0,1)
+        return self.dropout(x)
+
+class PermutationInvariantTransformer(nn.Module):
+    def __init__(self, num_features, d_model, output_size, nhead, num_layers, dropout=0.1):
+        """
+        Transformer qui est invariant aux permutations des séries temporelles.
+        
+        :param input_dim: La dimension de chaque élément dans la séquence (par exemple, nombres de pas de temps)
+        :param d_model: La dimension du modèle interne
+        :param nhead: Le nombre de têtes d'attention
+        :param num_layers: Le nombre de couches de l'encodeur Transformer
+        :param num_series: Le nombre de séries temporelles indépendantes
+        :param dropout: Taux de dropout pour la régularisation
+        """
+        super(PermutationInvariantTransformer, self).__init__()
+
+
+        # Embedding pour chaque série (input_dim -> d_model)
+        self.embedding = nn.Linear(num_features, d_model)
+
+        # Positionnal Encoding
+        self.positional_encoding = PositionalEncoding(d_model)
+
+        # Transformer Encoder
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # Couche de sortie pour obtenir une représentation finale
+        self.fc_out = nn.Linear(d_model, output_size) 
+
+    def forward(self, x):
+        # Embedding des séries temporelles
+        x = self.embedding(x)  # (batch_size * num_series, seq_len, d_model)
+
+        # Ajouter les encodages de position
+        x = self.positional_encoding(x)  # (batch_size * num_series, seq_len, d_model)
+
+
+        # Passer dans l'encodeur Transformer
+        x = self.transformer_encoder(x)  # (seq_len, batch_size * num_series, d_model)
+
+
+        # Retourner à la forme originale : (batch_size * num_series, d_model)
+        x = x.mean(dim=1)  # Calculer la moyenne sur la séquence (mean pooling)
+
+
+        # Passer par la couche linéaire de sortie
+        x = self.fc_out(x)  # (batch_size * num_series, 1)
+
+
+        return x
+
 
 class Embedder (torch.nn.Module):
     def __init__ (self, n_points, output_size, hidden_size):
@@ -31,93 +105,74 @@ class Embedder (torch.nn.Module):
         x = x.sum(-2)
         return self.rho(x)
 
+class GCNResnet(torch.nn.Module):
+    def __init__(self, n_features, hidden_size):
+        super().__init__()
+        self.conv_in = GCNConv(n_features, hidden_size)
+        self.conv_out = GCNConv(hidden_size, n_features)
+    
+    def forward(self, x, edge_index):
+        y = x
+        y = self.conv_in(y,edge_index)
+        y = F.leaky_relu(y)
+        y = self.conv_out(y,edge_index)
+        
+        return x+y
 
 # === Modèle GCN avec paramètre W ===
 class GCN(torch.nn.Module):
-    def __init__(self, in_channels=512, out_channels=512, num_embeddings=5, hidden_embedder_size = 512, hidden_size = 512):#num_embeddings : nombre de vecteurs par espèce (5).
-        super().__init__()
-        self.embedder=Embedder(in_channels, out_channels, hidden_embedder_size)
-        self.conv1 = GCNConv(out_channels, out_channels)
-        self.conv2 = GCNConv(out_channels, out_channels)
-        # Paramètre entraînable W pour la fonction de score
-        self.W = nn.Parameter(torch.randn(out_channels))
+    def __init__(self, nb_points=512, out_channels=512, num_embeddings=5, hidden_embedder_size = 512, hidden_size = 512):#num_embeddings : nombre de vecteurs par espèce (5).
+        self.n_pts = nb_points
+        self.n_trajectories = num_embeddings
 
-        self.lin_in = nn.Linear(out_channels, hidden_size)
-        self.lin_out = nn.Linear(hidden_size, 1)
+        super().__init__()
+        self.transformer = PermutationInvariantTransformer(nb_points, out_channels,out_channels, 8, 3, dropout=0) 
+        #self.embedder=Embedder(nb_points, out_channels, hidden_embedder_size)
+        self.conv_in = GCNConv (nb_points*num_embeddings, out_channels)
+        self.conv1 = GCNResnet(out_channels, out_channels)
+        self.conv2 = GCNResnet(out_channels, out_channels)
+        self.conv3 = GCNResnet(out_channels, out_channels)
+
+        self.lin_in = nn.Linear(out_channels*2, hidden_size)
+        self.lin_hid = nn.Linear(hidden_size, hidden_size)
+        #self.lin_out = nn.Linear(hidden_size, 1)
+        self.lin_out = nn.Linear(out_channels*2, 1)
 
     def forward(self, x, edge_index, src_idx, dst_idx):
 
+        ts = self.transformer(x)
 
         #aggregation des trajectoires
-        x = F.relu(self.embedder(x)) 
-        y = x
-        input = x
-        y = F.relu(self.conv1(y, edge_index))
-        y = self.conv2(y, edge_index)
-        x = F.relu(x+y)
-        y =x
+        #x = F.relu(self.embedder(x)) 
+        x = x.reshape(-1, self.n_pts*self.n_trajectories)
+        x = self.conv_in(x, edge_index)
+        x = F.leaky_relu(x)
+        x = F.leaky_relu(self.conv1(x, edge_index))
+        x = F.leaky_relu(self.conv2(x, edge_index))
+        x = F.leaky_relu(self.conv3(x, edge_index))
 
 
 
-        embeddings = x+input
+        embeddings = torch.cat ((x, ts), dim=-1)
 
 
         src_emb, dst_emb = embeddings[src_idx], embeddings[dst_idx]
         pred = dst_emb - src_emb
-        pred = self.lin_in(pred)
-        pred = F.relu(pred)
+        #pred = pred.sum(-1)
+        #pred = F.relu(self.lin_in(pred))
+        #pred = F.relu(self.lin_hid(pred))
         pred = self.lin_out(pred)
         return pred
 
-
-class SatMLP (torch.nn.Module):
-    def __init__(self,  num_trajectoires=5, in_channels=512, out_channels=512, hidden_size=1024):
-        super().__init__()
-        self.num_trajectoires = num_trajectoires
-        self.in_channels = in_channels
-        self.lin_in = nn.Linear(num_trajectoires*in_channels, hidden_size)
-        self.lin_out = nn.Linear(hidden_size, out_channels)
-    
-    def forward (self, x):
-        x = x.reshape(-1, self.num_trajectoires*self.in_channels)
-        x = self.lin_in(x)
-        x = F.relu(x)
-        x = self.lin_out(x)
-        return F.relu(x)
-
-# === Fonction de score f ===
-def f(x_i, x_j, W):
-    diff = x_i - x_j            # (512,)
-    #weighted_diff = W.dot(diff)
-    return F.sigmoid(diff.sum())    
-    #return torch.sigmoid(weighted_diff)
-# === Fonction d’évaluation ===
-def evaluate_model(model_gcn, batch_data, interaction_indices_batch, criterion):
-    model_gcn.eval()
-    total_loss = 0.0
-    with torch.no_grad():
-        for data, interaction_indices in zip(batch_data, interaction_indices_batch):
-            feats, edges = data["features"], data["edges"]
-            feats, edges = feats.to(device), edges.to(device)
-            interaction_indices = torch.tensor(interaction_indices).to(device)
-            embeddings = model_gcn(feats, edges)  # (N, 5, 512)
-            scores = [f(embeddings[i1], embeddings[i2], model_gcn.W) for i1, i2 in interaction_indices]
-            scores_tensor = torch.stack(scores)
-            labels = torch.ones_like(scores_tensor)
-            loss = criterion(scores_tensor, labels)
-            total_loss += loss.item()
-    avg_loss = total_loss / len(batch_data)
-    return avg_loss
-
 # === Chargement du dataset ===
-src = 10
+src = 0
 dst = src+1
-dataset = torch.load("dataset_sat.pt")#[:20]
+dataset = torch.load("dataset_sat.pt")
 batch_size = len(dataset)
 dataloader = DataLoader(dataset, batch_size=batch_size)
 
 #examples statistics
-nb_positive = torch.tensor(3500)
+nb_positive = torch.tensor(1854)
 nb_negative = 1854 
 pos_weight = nb_negative/nb_positive
 
@@ -125,27 +180,15 @@ criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
 # === Instanciation du modèle et optimiseur ===
-model_gcn = GCN(out_channels = 512)
+model_gcn = GCN(out_channels = 512, num_embeddings=10, hidden_size=2048)
 model_gcn.to(device)
-#sat_mdl = SatMLP(num_trajectoires=5).to(device)
 
 model = model_gcn
 
-#optimizer = torch.optim.Adam(model_gcn.parameters(), lr=1e-6)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-8)
-#scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1000, verbose=True)
-
-
-
-
-
-
-# === Perte avant entraînement ===
-#loss_before = evaluate_model(model_gcn, batch_data, interaction_indices_batch, criterion)
-#print(f"\n📊 Perte moyenne avant entraînement : {loss_before:.4f}")
-
-
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+#scheduler = ReduceLROnPlateau(optimizer, factor=0.1, patience=100) 
 n=0
+best=10000
 
 for i,epoch in enumerate(range(50000000000)):
     model.train()
@@ -160,11 +203,7 @@ for i,epoch in enumerate(range(50000000000)):
         
         interaction_indices = target[:,:2]
         labels = target[:,2]
-
-#        embeddings = model_gcn(feats,edges)
-        #scores = [f(embeddings[i1], embeddings[i2], model_gcn.W) for i1, i2 in interaction_indices]
-        #scores_tensor = torch.stack(scores)
-        #scores_tensor = f (embeddings[interaction_indices[:,0]], embeddings[interaction_indices[:,1]], model_gcn.W)
+        labels = labels.long()
 
         src_idx, dst_idx = interaction_indices[:,0], interaction_indices[:,1] #indices des sommets source et destination
 
@@ -175,19 +214,21 @@ for i,epoch in enumerate(range(50000000000)):
         loss = criterion(prediction.squeeze() , labels.float())
 
 
-        #labels = torch.ones_like(scores_tensor)
-        #loss = criterion(scores_tensor, labels)
         loss.backward()
+        old_lr = optimizer.param_groups[0]['lr']
+        #scheduler.step(loss)
+        new_lr = optimizer.param_groups[0]['lr']
+        if old_lr != new_lr:
+            print (f"[learning rate]: {old_lr} -> {new_lr}")
         optimizer.step()
         loss = loss.item()
         total_loss += loss
         writer.add_scalar("batch/train", loss, n)
+        if loss < best:
+            best=loss
         n+=1
 
     avg_loss = total_loss / len(dataloader)
-    #avg_loss.backward()
-    #optimizer.step()
-    #scheduler.step(avg_loss)
 
     # Logs
     if epoch % 500 == 0:
@@ -201,7 +242,8 @@ for i,epoch in enumerate(range(50000000000)):
         print(f" - Total gradient norm: {total_grad_norm:.6f}")
 
     if epoch % 50 == 0:
-        print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f}")
+        print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} best={best}")
+    #print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f}")
 
 
 

@@ -6,7 +6,7 @@ from torch_geometric.data import Data
 import os
 
 # Répertoires où se trouvent les fichiers de données
-FEATURES_DIR = "features/constant_size"
+FEATURES_DIR = "features"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
 
@@ -22,7 +22,13 @@ class CRNDataset(Dataset):
         return len(self.model_ids)
     
     def compute_statistics(self):
-        features = [self[i]["features"] for i in range(len(self))]
+        #features = [self[i]["features"] for i in range(len(self))]
+        features = []
+        for i in range (len(self)):
+            try:
+                features.append(self[i]["features"])
+            except:
+               pass 
         total_sum = sum([feat.sum() for feat in features])
         nb_total = sum([torch.tensor(feat.shape).prod() for feat in features])
         self.mean = total_sum / nb_total
@@ -42,15 +48,27 @@ class CRNDataset(Dataset):
         interactions_path = os.path.join(INTERACTIONS_DIR, f"interaction_indices_{model_id_str}.pt")
 
         features = torch.load(features_path, weights_only=True)
+
+        #if (torch.any(features <= 0)):
+        #    print ("error: negative features for instance ",i)
+        #    raise ValueError
+
         #features = torch.log(features)
         edges = torch.load(edges_path, weights_only=True)
         interactions = torch.load(interactions_path, weights_only=True)
         interactions = torch.tensor([[int(i), int(j)] for i, j in interactions])
 
+        eps = torch.tensor(1e-80)
+        features = torch.max(features, eps)
+        maximums = features.max(dim=-1)[0]
+        maximums = maximums.unsqueeze(-1).expand(features.shape)
+        features = features / maximums
+
         return {
             "model_id": model_id_str,
-            "features": (features - self.mean) / self.std,
+            #"features": (features - self.mean) / self.std,
             #"features":features,
+            "features":features,
             "edges": edges,
             "interactions": interactions
         }
@@ -100,7 +118,7 @@ if __name__ == "__main__":
 
     # Création du Dataset
     dataset = CRNDataset(model_ids)
-    dataset.compute_statistics()
+    #dataset.compute_statistics()
     #print(f"mean = {dataset.mean:.4f}, std = {dataset.std:.4f}")
 
     # Transformation en Data (PyG) et sauvegarde
@@ -118,9 +136,10 @@ if __name__ == "__main__":
 
                 n_edge = torch.tensor([src,dst,1])
                 inverse = torch.tensor([dst,src])
-                n_target.append(n_edge)
+                #n_target.append(n_edge)
                 if not(check_if_edge_exists(inverse, target)):
                    n_target.append(torch.tensor([dst,src,0]))
+                   n_target.append(n_edge)
             
             n_target = torch.stack(n_target)
             nb_1 = (n_target[:,-1] == 1).sum()
@@ -131,12 +150,12 @@ if __name__ == "__main__":
 
 
 
-
+            #feats = (feats - feats.mean())/feats.std() 
             data = Data(x=feats, edge_index=edges, y=n_target)
             datas.append(data)
-        except:
-            print ("Skipping ", i)
-
+        except Exception as e:
+            print (f"[pass {i}]: {e}")
+            continue
 
     torch.save(datas, "dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")
