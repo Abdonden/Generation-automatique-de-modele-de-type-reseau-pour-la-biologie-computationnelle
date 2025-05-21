@@ -119,7 +119,7 @@ fichiers_tries = sorted(
 )
 
 # Garde les 100 premiers fichiers
-fichiers_a_traiter = fichiers_tries[:204]
+fichiers_a_traiter = fichiers_tries #fichiers_tries[:204]
 
 # Traitement
 for fichier in fichiers_a_traiter:

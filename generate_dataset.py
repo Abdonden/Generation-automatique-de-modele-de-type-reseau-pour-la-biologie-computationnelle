@@ -105,6 +105,12 @@ def check_if_edge_exists (edge, interaction_indices):
         if e[0] == edge[0] and e[1] == edge[1]:
             return True
     return False
+
+class MyData(Data):
+    def __inc__(self, key, value, *args, **kwargs):
+        if key=="y":
+            return self.num_nodes
+        return super().__inc__(key,value,*args,**kwargs)
     
 if __name__ == "__main__":
     # Récupérer tous les modèles automatiquement
@@ -124,34 +130,41 @@ if __name__ == "__main__":
     # Transformation en Data (PyG) et sauvegarde
     datas = []
     tot_0, tot_1 = 0,0
+
+    max_nb_sommets = 0
     for i in range(len(dataset)):
         try:
             entry = dataset[i]
             feats = entry["features"]
             edges = entry["edges"]
             target = entry["interactions"]
+
+            if max_nb_sommets < len(feats):
+                max_nb_sommets = len(feats)
+
+
             n_target = []
+            n_labels = []
             for j in range(len(target)):
                 src, dst = target[j][0], target[j][1]
 
-                n_edge = torch.tensor([src,dst,1])
+                n_edge = torch.tensor([src,dst])
+
                 inverse = torch.tensor([dst,src])
                 #n_target.append(n_edge)
                 if not(check_if_edge_exists(inverse, target)):
-                   n_target.append(torch.tensor([dst,src,0]))
+                   n_target.append(torch.tensor([dst,src]))
+                   n_labels.append(torch.tensor(0))
                    n_target.append(n_edge)
+                   n_labels.append(torch.tensor(1))
             
             n_target = torch.stack(n_target)
-            nb_1 = (n_target[:,-1] == 1).sum()
-            nb_0 = (n_target[:,-1] == 0).sum()
-            assert len(n_target) == (nb_0+nb_1), "error: n_target != nb_0 + nb_1"
-            tot_0 += nb_0
-            tot_1 += nb_1
+            n_labels = torch.stack(n_labels)
 
 
 
             #feats = (feats - feats.mean())/feats.std() 
-            data = Data(x=feats, edge_index=edges, y=n_target)
+            data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels)
             datas.append(data)
         except Exception as e:
             print (f"[pass {i}]: {e}")
@@ -160,6 +173,7 @@ if __name__ == "__main__":
     torch.save(datas, "dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")
     print ("Total size= ",len(datas))
+    print ("Max graph size=",max_nb_sommets)
     print ("mean=",dataset.mean, " std=", dataset.std)
     print ("tot_0=", tot_0, " tot_1=", tot_1)
 
