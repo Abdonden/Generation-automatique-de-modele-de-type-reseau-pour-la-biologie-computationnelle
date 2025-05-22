@@ -212,12 +212,50 @@ def create_query (src_emb, dst_emb, graph_emb):
     return torch.cat((src_emb, dst_emb, graph_emb), dim=-1)
 
 
+def test_model(model, dloader):
+    n_examples = 0
+    tot_loss = 0
+    with torch.no_grad():
+        for batch in dloader:
+            feats, edges = batch.x, batch.edge_index
+            feats, edges = feats.to(device).float(), edges.to(device)
+
+            interaction_indices= batch.y.to(device)
+            n_batched_examples = interaction_indices.shape[0]
+            
+            
+            labels = batch.labels.to(device)
+            labels = labels.long()
+
+            src_idx, dst_idx = interaction_indices[:,0], interaction_indices[:,1] #indices des sommets source et destination
+
+            b = batch.batch.to(device)
+
+            prediction = model (b,feats,edges, src_idx, dst_idx)
+
+
+
+            loss = criterion(prediction.squeeze() , labels.float())
+            tot_loss += loss.detach()*n_batched_examples
+            n_examples += n_batched_examples
+    return tot_loss/n_examples
+            
+
+
+
+    
+
+
 # === Chargement du dataset ===
 src = 0
 dst = src+1
 dataset = torch.load("dataset_sat.pt")
-batch_size = len(dataset)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+n_datas = len(dataset)
+trainset = dataset[:int(n_datas*0.9)]
+testset = dataset[int(n_datas*0.9):]
+batch_size = len(trainset)
+dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
+testloader = DataLoader(testset, batch_size=len(testset))
 
 #examples statistics
 nb_positive = torch.tensor(1854)
@@ -233,10 +271,11 @@ model_gcn.to(device)
 
 model = model_gcn
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
 #scheduler = ReduceLROnPlateau(optimizer, factor=0.1, patience=100) 
 n=0
 best=10000
+best_test = torch.tensor(10000)
 
 for i,epoch in enumerate(range(50000000000)):
     model.train()
@@ -284,6 +323,11 @@ for i,epoch in enumerate(range(50000000000)):
         best=avg_loss
     writer.add_scalar("epoch/train", avg_loss, i)
 
+    test_loss = test_model(model, testloader)
+    writer.add_scalar("epoch/test", test_loss, i)
+    if best_test > test_loss:
+        best_test = test_loss
+
 
     # Logs
     if epoch % 500 == 0:
@@ -297,7 +341,7 @@ for i,epoch in enumerate(range(50000000000)):
         print(f" - Total gradient norm: {total_grad_norm:.6f}")
 
     if epoch % 50 == 0:
-        print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} best={best}")
+        print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} best={best} best_test={best_test}")
 #    print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f}")
 
 
