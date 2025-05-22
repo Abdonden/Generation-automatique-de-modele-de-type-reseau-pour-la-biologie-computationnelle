@@ -253,7 +253,7 @@ dataset = torch.load("dataset_sat.pt")
 n_datas = len(dataset)
 trainset = dataset[:int(n_datas*0.9)]
 testset = dataset[int(n_datas*0.9):]
-batch_size = len(trainset)
+batch_size = 100 #len(trainset)
 dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 testloader = DataLoader(testset, batch_size=len(testset))
 

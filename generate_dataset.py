@@ -2,8 +2,8 @@
 
 import torch
 from torch.utils.data import Dataset, DataLoader
-from torch_geometric.data import Data
 import os
+from data import *
 
 # Répertoires où se trouvent les fichiers de données
 FEATURES_DIR = "features"
@@ -106,12 +106,7 @@ def check_if_edge_exists (edge, interaction_indices):
             return True
     return False
 
-class MyData(Data):
-    def __inc__(self, key, value, *args, **kwargs):
-        if key=="y":
-            return self.num_nodes
-        return super().__inc__(key,value,*args,**kwargs)
-    
+   
 if __name__ == "__main__":
     # Récupérer tous les modèles automatiquement
     model_ids = get_available_model_ids()
