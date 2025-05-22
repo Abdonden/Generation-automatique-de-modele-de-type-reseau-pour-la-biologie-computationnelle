@@ -134,6 +134,9 @@ if __name__ == "__main__":
             edges = entry["edges"]
             target = entry["interactions"]
 
+            if torch.any(torch.isnan(feats)):
+                raise ValueError ("Nan in a trajectory")
+
             if max_nb_sommets < len(feats):
                 max_nb_sommets = len(feats)
 

@@ -1,5 +1,6 @@
 
 from torch_geometric.data import Data
+import torch
 
 class MyData(Data):
     def __inc__(self, key, value, *args, **kwargs):
