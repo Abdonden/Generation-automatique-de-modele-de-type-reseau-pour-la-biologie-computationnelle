@@ -101,12 +101,13 @@ class PermutationInvariantTransformer(nn.Module):
 
 
 class MLP (torch.nn.Module):
-    def __init__ (self, n_points, output_size, hidden_size):
+    def __init__ (self, n_points, output_size, hidden_size, dropout=0.2):
         super().__init__()
 
         self.lin_in = nn.Linear(n_points, hidden_size)
         self.hid = nn.Linear(hidden_size, hidden_size)
         self.lin_out = nn.Linear(hidden_size, output_size)
+        self.dropout = nn.Dropout(dropout)
 
         self.has_proj = n_points > hidden_size
         if self.has_proj:
@@ -122,6 +123,7 @@ class MLP (torch.nn.Module):
         x = self.lin_in(x)
         x = F.gelu(x)
         x = self.hid(x)
+        x = self.dropout(x)
 
         if self.has_proj:
             skip = self.proj(skip)
@@ -131,27 +133,31 @@ class MLP (torch.nn.Module):
         return x
 
 class Embedder (torch.nn.Module):
-    def __init__(self, n_points, output_size, hidden_size):
+    def __init__(self, n_points, output_size, hidden_size, dropout=0.2):
         super().__init__()
         self.mlp = MLP(n_points, n_points, hidden_size)
+        self.dropout  = nn.Dropout(dropout)
         self.rho = MLP(n_points, output_size, hidden_size)
     def forward(self,x):
         x = F.gelu(self.mlp(x))
+        x = self.dropout(x)
         return self.rho(x.sum(-2))
 
 class GCNResnet(torch.nn.Module):
-    def __init__(self, in_features, out_features):
+    def __init__(self, in_features, out_features, dropout = 0.2):
         super().__init__()
         if in_features < out_features:
             raise ValueError (f"GCNResnet can only handle layers with in_features >= out_features. Got in_features={in_features} and out_features={out_features}")
         self.has_proj  = in_features != out_features
         self.conv = SAGEConv(in_features, out_features)
+        self.dropout = nn.Dropout(dropout)
         if self.has_proj:
             self.proj = nn.Linear(in_features, out_features)
 
     
     def forward(self, x, edge_index):
         y = self.conv (x,edge_index)
+        y = self.dropout(y)
         if self.has_proj:
             skip = self.proj(x)
         else:
@@ -160,20 +166,20 @@ class GCNResnet(torch.nn.Module):
 
 # === Modèle GCN avec paramètre W ===
 class GCN(torch.nn.Module):
-    def __init__(self, nb_points=512, out_channels=64):#num_embeddings : nombre de vecteurs par espèce (5).
+    def __init__(self, nb_points=512, out_channels=64, dropout=0.2):#num_embeddings : nombre de vecteurs par espèce (5).
         self.n_pts = nb_points
 
         super().__init__()
-        #self.transformer = PermutationInvariantTransformer(nb_points, out_channels, out_channels, 1, 1, dropout=0) 
-        self.embedder=Embedder(nb_points, out_channels, out_channels)
-        self.conv1 = GCNResnet(out_channels, out_channels)
-        self.conv2 = GCNResnet(out_channels, out_channels)
-        self.conv3 = GCNResnet(out_channels, out_channels)
+        self.embedder= PermutationInvariantTransformer(nb_points, out_channels, out_channels, 4, 2, dropout=dropout) 
+        #self.embedder=Embedder(nb_points, out_channels, out_channels, dropout=dropout)
+        self.conv1 = GCNResnet(out_channels, out_channels, dropout=dropout)
+        self.conv2 = GCNResnet(out_channels, out_channels, dropout=dropout)
+        self.conv3 = GCNResnet(out_channels, out_channels, dropout=dropout)
 
         self.bn = nn.BatchNorm1d(out_channels)
-        self.lin = nn.Sequential (MLP(out_channels*3, out_channels*2, out_channels*2),
+        self.lin = nn.Sequential (MLP(out_channels*3, out_channels*2, out_channels*2, dropout=dropout),
                                   nn.ReLU(),
-                                  MLP(out_channels*2, 1, out_channels*2))
+                                  MLP(out_channels*2, 1, out_channels*2, dropout=dropout))
 
     def forward(self,batch, x, edge_index, src_idx, dst_idx):
 
@@ -213,6 +219,7 @@ def create_query (src_emb, dst_emb, graph_emb):
 
 
 def test_model(model, dloader):
+    model.eval()
     n_examples = 0
     tot_loss = 0
     with torch.no_grad():
@@ -254,7 +261,7 @@ n_datas = len(dataset)
 trainset = dataset[:int(n_datas*0.9)]
 testset = dataset[int(n_datas*0.9):]
 batch_size = len(trainset)
-dataloader = DataLoader(trainset, batch_size=batch_size) #, shuffle=True)
+dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 testloader = DataLoader(testset, batch_size=len(testset))
 
 #examples statistics
@@ -266,7 +273,7 @@ criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
 # === Instanciation du modèle et optimiseur ===
-model_gcn = GCN(out_channels = 16)
+model_gcn = GCN(out_channels = 16, dropout=0.5)
 model_gcn.to(device)
 
 model = model_gcn
@@ -342,7 +349,7 @@ for i,epoch in enumerate(range(50000000000)):
 
     if epoch % 50 == 0:
         print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} best={best} best_test={best_test}")
-    print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f}")
+    print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} Test:{test_loss:.4f}")
 
 
 

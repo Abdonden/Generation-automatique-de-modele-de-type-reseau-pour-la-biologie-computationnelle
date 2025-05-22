@@ -106,6 +106,24 @@ def check_if_edge_exists (edge, interaction_indices):
             return True
     return False
 
+def valid_trajectories (feats):
+    """
+        identifies the set of indices where each trajectory is valid (no NaN)
+    """
+    ret = []
+    n_species, n_trajectories, n_points = feats.shape
+    for i in range (n_trajectories):
+        ok = True
+        for s in range(n_species):
+            if torch.any(torch.isnan(feats[s][i])):
+                print ("nan detected in traj ", i, " of specie ", s)
+                ok=False
+        if ok:
+            ret.append(i)
+    if ret == []:
+        raise ValueError ("no valid trajectory for this model")
+    return torch.tensor(ret)
+
    
 if __name__ == "__main__":
     # Récupérer tous les modèles automatiquement
@@ -134,8 +152,9 @@ if __name__ == "__main__":
             edges = entry["edges"]
             target = entry["interactions"]
 
-            if torch.any(torch.isnan(feats)):
-                raise ValueError ("Nan in a trajectory")
+            traj_idx = valid_trajectories(feats)
+            feats = feats[:,traj_idx,:]
+
 
             if max_nb_sommets < len(feats):
                 max_nb_sommets = len(feats)
