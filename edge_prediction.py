@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from data import *
 
 
-device = torch.device("cuda:0") #processeur = cpu, carte graphique = cuda
 
 def mask_random_edges(data, mask_ratio=0.2):
     edge_index = data.edge_index  # [2, E]
@@ -70,7 +69,7 @@ def evaluate_edge_prediction_loss(
 
     n_positives = labels.sum()
     n_negatives = len(labels)-n_positives
-    weights = (n_negatives/n_positives).to(device)
+    weights = (n_negatives/n_positives)
 
     labels = labels.unsqueeze(-1)
     loss = F.binary_cross_entropy_with_logits(pred, labels, pos_weight= weights)

@@ -174,8 +174,6 @@ class GCN(torch.nn.Module):
                                   nn.ReLU(),
                                   MLP(out_channels*2, 1, out_channels*2, dropout=dropout))
 
-        #antisymetry predictor
-        self.antisym_pred = MLP(out_channels*3,1,out_channels*3,dropout=dropout)
 
     def forward(self,batch, x, edge_index, src_idx, dst_idx):
 
@@ -183,6 +181,7 @@ class GCN(torch.nn.Module):
 
         #x = ts
         x = self.embedder(x)
+        ts = x.clone()
 
 
 
@@ -205,13 +204,12 @@ class GCN(torch.nn.Module):
         xy = create_query(src_emb, dst_emb, graph_emb)
         yx = create_query(dst_emb, src_emb, graph_emb)
 
-        pred = self.lin(xy) - self.lin(yx)
-        alpha = F.sigmoid(self.antisym_pred(xy))
-
-        pred = alpha*pred + (1-alpha)*self.lin(xy)
+        predxy = self.lin(xy)
+        predyx = self.lin(yx)
 
 
-        return pred, xy
+
+        return (predxy, predyx), xy
 
 
 

@@ -34,11 +34,11 @@ def test_model(model, dloader):
 
             b = batch.batch.to(device)
 
-            prediction, _ = model (b,feats,edges, src_idx, dst_idx)
+            (predxy,predyx), _ = model (b,feats,edges, src_idx, dst_idx)
 
 
 
-            loss = criterion(prediction.squeeze() , labels.float())
+            loss = criterion(predxy.squeeze() , labels.float())
             tot_loss += loss.detach()*n_batched_examples
             n_examples += n_batched_examples
     return tot_loss/n_examples
@@ -74,15 +74,18 @@ model_gcn = GCN(out_channels = out_channels, dropout=0.1)
 model_gcn.to(device)
 
 model = model_gcn
-head_model = MLP(out_channels*3, 1,out_channels*3, dropout=0.1).to(device).float()
+ep_model = MLP(out_channels*3, 1,out_channels*3, dropout=0.1).to(device).float()
+tmp_model= MLP(out_channels*3, 512,out_channels*3, dropout=0.1).to(device).float()
 
 optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(head_model.parameters()),
+        list(model.parameters()) + list(ep_model.parameters()),
         lr=1e-3,weight_decay=1e-5)
 #scheduler = ReduceLROnPlateau(optimizer, factor=0.1, patience=100) 
 n=0
 best=10000
 best_test = torch.tensor(10000)
+
+alpha = 0.1 #antisymetry penalty coef
 
 for i,epoch in enumerate(range(50000000000)):
     model.train()
@@ -106,14 +109,24 @@ for i,epoch in enumerate(range(50000000000)):
 
         b = batch.batch.to(device)
 
-        prediction, xy = model (b,feats,edges, src_idx, dst_idx)
+        (predxy, predyx), _ = model (b,feats,edges, src_idx, dst_idx)
+
+        n_positives = labels.sum()
+        n_negatives = len(labels)-n_positives
+        weights = (n_negatives/n_positives).to(device)
 
 
 
-        dir_loss = criterion(prediction.squeeze() , labels.float())
-        ep_loss = evaluate_edge_prediction_loss(model, head_model, batch, mask_ratio=0.1)
+        # dir_loss: prediction de la direction (main task)
+        # ep_loss : prediction de la présence d'un arc
+        # antisym_loss: penalité sur l'antisymétrie
+        #temporal_loss: penalité de reconstruction sur les séries temporelles TODO
+        dir_loss = criterion(predxy.squeeze() , labels.float())
+        ep_loss = evaluate_edge_prediction_loss(model, ep_model, batch, mask_ratio=0.1)
+
+        antisym_loss = ((F.sigmoid(predxy) + F.sigmoid(predyx)-1)**2).mean()
         
-        main_loss = dir_loss + ep_loss
+        main_loss = dir_loss + ep_loss + alpha*antisym_loss
 
         main_loss.backward()
         old_lr = optimizer.param_groups[0]['lr']
