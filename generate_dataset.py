@@ -4,8 +4,11 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import os
 from data import *
+import numpy as np
+from scipy.interpolate import interp1d
 
 # Répertoires où se trouvent les fichiers de données
+FEATURES_DIR = "features/1_traj"
 FEATURES_DIR = "features"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
@@ -64,6 +67,8 @@ class CRNDataset(Dataset):
         maximums = maximums.unsqueeze(-1).expand(features.shape)
         features = features / maximums
 
+
+
         return {
             "model_id": model_id_str,
             #"features": (features - self.mean) / self.std,
@@ -118,11 +123,24 @@ def valid_trajectories (feats):
             if torch.any(torch.isnan(feats[s][i])):
                 print ("nan detected in traj ", i, " of specie ", s)
                 ok=False
+                raise ValueError ("One trajectory rejected")
         if ok:
             ret.append(i)
-    if ret == []:
-        raise ValueError ("no valid trajectory for this model")
+    #if ret == []:
+    #    raise ValueError ("no valid trajectory for this model")
     return torch.tensor(ret)
+
+
+def logarithmic_resampling(traj):
+        data = traj
+        # linear times
+        t = np.arange(1,len(data)+1)
+        # logarithmic times
+        t_log = np.logspace(np.log10(t[0]), np.log10(t[-1]), num=len(t), base=10.0)
+        # interpolate
+        interp_func = interp1d(t, data, kind='linear', fill_value="extrapolate")
+        data_log = interp_func(t_log)
+        return torch.tensor(data_log)
 
    
 if __name__ == "__main__":
@@ -146,14 +164,32 @@ if __name__ == "__main__":
 
     max_nb_sommets = 0
     for i in range(len(dataset)):
-        try:
+        #try:
             entry = dataset[i]
+            identifier = entry["model_id"]
             feats = entry["features"]
             edges = entry["edges"]
             target = entry["interactions"]
 
-            traj_idx = valid_trajectories(feats)
+            try:
+                traj_idx = valid_trajectories(feats)
+            except Exception as e:
+                print ("skip model: ", identifier)
+                continue
             feats = feats[:,traj_idx,:]
+            if len(traj_idx) == 1:
+                feats = feats.permute(-1,1,0)
+
+
+                # LOGARITHMIC RESCALE
+               # feats = feats.permute(-1,1,0)
+               # feats = feats.squeeze()
+               # n_trajs = []
+               # for s in range(len(feats)):
+               #     n_trajs.append(logarithmic_resampling(feats[s,:]))
+               # feats = torch.stack(n_trajs)
+               # feats = feats.unsqueeze(1)
+
 
 
             if max_nb_sommets < len(feats):
@@ -162,6 +198,7 @@ if __name__ == "__main__":
 
             n_target = []
             n_labels = []
+
             for j in range(len(target)):
                 src, dst = target[j][0], target[j][1]
 
@@ -174,18 +211,29 @@ if __name__ == "__main__":
                    n_labels.append(torch.tensor(0))
                    n_target.append(n_edge)
                    n_labels.append(torch.tensor(1))
+                   tot_0 += 1
+                   tot_1 += 1
+                else: #ANTISYM now
+                   n_target.append(n_edge)
+                   n_labels.append(torch.tensor(1))
+                   tot_1 += 1
+
             
-            n_target = torch.stack(n_target)
-            n_labels = torch.stack(n_labels)
+            if n_target == []:
+                print ("ERROR: empty for i=",i, " target=", target, " model=", identifier)
+                #crash
+            else:
+                n_target = torch.stack(n_target)
+                n_labels = torch.stack(n_labels)
 
 
 
-            #feats = (feats - feats.mean())/feats.std() 
-            data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels)
-            datas.append(data)
-        except Exception as e:
-            print (f"[pass {i}]: {e}")
-            continue
+                #feats = (feats - feats.mean())/feats.std() 
+                data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels)
+                datas.append(data)
+        #except Exception as e:
+        #    print (f"[pass {i}]: {e}")
+        #    continue
 
     torch.save(datas, "dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")

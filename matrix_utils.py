@@ -103,8 +103,9 @@ def generer_matrix(nom_fichier, model_id):
 #Appelle generer_matrix si l’ID est trouvé
 
 # Dossier contenant les fichiers SBML
-dossier_sbml = "biomodels"
-
+#dossier_sbml = "biomodels"
+dossier_sbml = "newmodels"
+ 
 # Récupère tous les fichiers .xml dans le dossier
 tous_les_fichiers = [
     os.path.join(dossier_sbml, f)

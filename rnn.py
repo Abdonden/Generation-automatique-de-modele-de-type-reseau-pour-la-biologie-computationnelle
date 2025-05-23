@@ -170,8 +170,8 @@ class GCN(torch.nn.Module):
         self.n_pts = nb_points
 
         super().__init__()
-        self.embedder= PermutationInvariantTransformer(nb_points, out_channels, out_channels, 4, 2, dropout=dropout) 
-        #self.embedder=Embedder(nb_points, out_channels, out_channels, dropout=dropout)
+        #self.embedder= PermutationInvariantTransformer(nb_points, out_channels, out_channels, 4, 2, dropout=dropout) 
+        self.embedder=Embedder(nb_points, out_channels, out_channels*2, dropout=dropout)
         self.conv1 = GCNResnet(out_channels, out_channels, dropout=dropout)
         self.conv2 = GCNResnet(out_channels, out_channels, dropout=dropout)
         self.conv3 = GCNResnet(out_channels, out_channels, dropout=dropout)
@@ -180,6 +180,9 @@ class GCN(torch.nn.Module):
         self.lin = nn.Sequential (MLP(out_channels*3, out_channels*2, out_channels*2, dropout=dropout),
                                   nn.ReLU(),
                                   MLP(out_channels*2, 1, out_channels*2, dropout=dropout))
+
+        #antisymetry predictor
+        self.antisym_pred = MLP(out_channels*3,1,out_channels*3,dropout=dropout)
 
     def forward(self,batch, x, edge_index, src_idx, dst_idx):
 
@@ -210,6 +213,11 @@ class GCN(torch.nn.Module):
         yx = create_query(dst_emb, src_emb, graph_emb)
 
         pred = self.lin(xy) - self.lin(yx)
+        alpha = F.sigmoid(self.antisym_pred(xy))
+
+        pred = alpha*pred + (1-alpha)*self.lin(xy)
+
+
         return pred
 
 
@@ -260,7 +268,7 @@ dataset = torch.load("dataset_sat.pt")
 n_datas = len(dataset)
 trainset = dataset[:int(n_datas*0.9)]
 testset = dataset[int(n_datas*0.9):]
-batch_size = len(trainset)
+batch_size = 32 #len(trainset)
 dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 testloader = DataLoader(testset, batch_size=len(testset))
 
@@ -273,12 +281,12 @@ criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
 # === Instanciation du modèle et optimiseur ===
-model_gcn = GCN(out_channels = 16, dropout=0.5)
+model_gcn = GCN(out_channels = 16, dropout=0.3)
 model_gcn.to(device)
 
 model = model_gcn
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5,weight_decay=1e-5)
 #scheduler = ReduceLROnPlateau(optimizer, factor=0.1, patience=100) 
 n=0
 best=10000
@@ -348,8 +356,8 @@ for i,epoch in enumerate(range(50000000000)):
         print(f" - Total gradient norm: {total_grad_norm:.6f}")
 
     if epoch % 50 == 0:
-        print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} best={best} best_test={best_test}")
-    print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} Test:{test_loss:.4f}")
+        print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} test={test_loss:.4f} best={best} best_test={best_test}")
+    #print(f"Epoch {epoch} - Perte moyenne : {avg_loss:.4f} Test:{test_loss:.4f}")
 
 
 
