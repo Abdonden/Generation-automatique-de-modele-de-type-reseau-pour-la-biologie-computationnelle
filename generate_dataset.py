@@ -203,10 +203,13 @@ if __name__ == "__main__":
         datas.append(data)
         
         #subgraphs:
-        sub_datas, n_0, n_1 = extract_all_subgraphs(data, entry["interactions"])
-        custom_dataset = custom_dataset + sub_datas
-        tot_0 += n_0
-        tot_1 += n_1
+
+        if i < 297:
+            for num_hops in range(1, int(data.x.size(0)-2)):
+                sub_datas, n_0, n_1 = extract_all_subgraphs(data, entry["interactions"])
+                custom_dataset = custom_dataset + sub_datas
+                tot_0 += n_0
+                tot_1 += n_1
 
 
 
@@ -215,5 +218,6 @@ if __name__ == "__main__":
     torch.save(custom_dataset, "sub_dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")
     print("Total size =", len(datas))
+    print ("Total custom size=", len(custom_dataset))
     print("mean =", dataset.mean, " std =", dataset.std)
     print("tot_0 =", tot_0, " tot_1 =", tot_1)

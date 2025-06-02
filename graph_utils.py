@@ -95,16 +95,17 @@ def extract_2hop_subgraph(node_idx, data,interaction_indices, num_hops=2):
     for edge_ in interaction_indices:
         src, dst = edge_
         edge = torch.stack([src,dst])
-        if check_if_edge_exists(edge, edge_index):
-            ys.append(edge)
-            labels.append(1)
-            inverse = torch.stack([dst, src])
-            n_1 += 1
+        if src == node_idx or dst == node_idx: #prediction que pour les arcs connectés à notre sommet (on a toute l'info locale)
+            if check_if_edge_exists(edge, edge_index):
+                ys.append(edge)
+                labels.append(1)
+                inverse = torch.stack([dst, src])
+                n_1 += 1
 
-            if not check_if_edge_exists(inverse, interaction_indices):
-                ys.append(inverse)
-                labels.append(0)
-                n_0 += 1
+                if not check_if_edge_exists(inverse, interaction_indices):
+                    ys.append(inverse)
+                    labels.append(0)
+                    n_0 += 1
     
     if ys == []:
         return None #can be only self loops
@@ -130,7 +131,7 @@ def extract_all_subgraphs(data, interaction_indices, num_hops=2):
     ret = []
     tot_0, tot_1 = 0 ,0
     for i in range(num_nodes):
-        sub_data_ = extract_2hop_subgraph(torch.tensor([i]), data, interaction_indices, ,num_hops=num_hops)
+        sub_data_ = extract_2hop_subgraph(torch.tensor([i]), data, interaction_indices, num_hops=num_hops)
         if not (sub_data_ is None):
             sub_data, n_0, n_1 = sub_data_
             tot_0 += 1

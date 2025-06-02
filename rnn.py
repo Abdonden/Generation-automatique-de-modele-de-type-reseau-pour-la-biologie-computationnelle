@@ -115,6 +115,7 @@ sub_dataset = torch.load("sub_dataset_sat.pt") #subgraphs
 dataset = standard_dataset + sub_dataset
 
 len_standard = len(standard_dataset)
+print (int(len_standard*0.9))
 standard_trn, standard_tst = standard_dataset[:int(len_standard*0.9)], standard_dataset[int(len_standard*0.9):]
 
 
@@ -125,14 +126,14 @@ testset = standard_tst
 #n_datas = len(dataset)
 #trainset = dataset[:int(n_datas*0.9)]
 #testset = dataset[int(n_datas*0.9):]
-batch_size = len(trainset)
+batch_size = 100 #len(trainset)
 print ("batch_size=",batch_size)
 dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 testloader = DataLoader(testset, batch_size=len(testset))
 
 #examples statistics
-nb_positive = torch.tensor(6144)
-nb_negative = 4551
+nb_positive = torch.tensor(8514)
+nb_negative = 6921
 pos_weight = nb_negative/nb_positive
 
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
