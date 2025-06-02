@@ -6,6 +6,8 @@ import os
 from data import *
 import numpy as np
 from scipy.interpolate import interp1d
+from graph_utils import *
+from tqdm import tqdm
 
 # Répertoires où se trouvent les fichiers de données
 FEATURES_DIR = "features"
@@ -97,12 +99,6 @@ def lister_les_triplets(model_ids):
         triplets.append(triplet)
     return triplets
 
-def check_if_edge_exists(edge, interaction_indices):
-    for i in range(len(interaction_indices)):
-        e = interaction_indices[i]
-        if e[0] == edge[0] and e[1] == edge[1]:
-            return True
-    return False
 
 def valid_trajectories(feats):
     ret = []
@@ -126,26 +122,9 @@ def logarithmic_resampling(traj):
     data_log = interp_func(t_log)
     return torch.tensor(data_log)
 
-if __name__ == "__main__":
-    # Récupérer les modèles disponibles (ceux avec les trois fichiers existants)
-    model_ids = get_available_model_ids()
-    print(f" Modèles trouvés : {[str(mid).zfill(4) for mid in model_ids]}")
 
-    triplets = lister_les_triplets(model_ids)
-    print("\n Liste des triplets disponibles :")
-    for triplet in triplets:
-        print(f" - {triplet}")
 
-    # Création du Dataset
-    dataset = CRNDataset(model_ids)
-    # dataset.compute_statistics()
-
-    datas = []
-    tot_0, tot_1 = 0, 0
-    max_nb_sommets = 0
-
-    for i in range(len(dataset)):
-        entry = dataset[i]
+def process_entry(entry):
         identifier = entry["model_id"]
         feats = entry["features"]
         edges = entry["edges"]
@@ -155,17 +134,17 @@ if __name__ == "__main__":
             traj_idx = valid_trajectories(feats)
         except Exception as e:
             print("skip model:", identifier)
-            continue
+            return None
+
 
         feats = feats[:, traj_idx, :]
         if len(traj_idx) == 1:
             feats = feats.permute(-1, 1, 0)
 
-        if max_nb_sommets < len(feats):
-            max_nb_sommets = len(feats)
 
         n_target = []
         n_labels = []
+        tot_0, tot_1 = 0, 0
 
         for j in range(len(target)):
             src, dst = target[j][0], target[j][1]
@@ -186,15 +165,55 @@ if __name__ == "__main__":
 
         if n_target == []:
             print("ERROR: empty for i=", i, " target=", target, " model=", identifier)
+            return None
         else:
             n_target = torch.stack(n_target)
             n_labels = torch.stack(n_labels)
             data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels)
-            datas.append(data)
+            return data, tot_0, tot_1
+
+
+
+if __name__ == "__main__":
+    # Récupérer les modèles disponibles (ceux avec les trois fichiers existants)
+    model_ids = get_available_model_ids()
+    print(f" Modèles trouvés : {[str(mid).zfill(4) for mid in model_ids]}")
+
+    triplets = lister_les_triplets(model_ids)
+    print("\n Liste des triplets disponibles :")
+    for triplet in triplets:
+        print(f" - {triplet}")
+
+    # Création du Dataset
+    dataset = CRNDataset(model_ids)
+    # dataset.compute_statistics()
+
+    datas = []
+    custom_dataset  = []
+    tot_0, tot_1 = 0, 0
+
+    for i in tqdm(range(len(dataset))):
+        entry = dataset[i]
+        ret = process_entry (entry)
+        if ret is None:
+            continue
+        data, n_0, n_1 = ret
+        tot_0 += n_0
+        tot_1 += n_1
+        datas.append(data)
+        
+        #subgraphs:
+        sub_datas, n_0, n_1 = extract_all_subgraphs(data, entry["interactions"])
+        custom_dataset = custom_dataset + sub_datas
+        tot_0 += n_0
+        tot_1 += n_1
+
+
+
 
     torch.save(datas, "dataset_sat.pt")
+    torch.save(custom_dataset, "sub_dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")
     print("Total size =", len(datas))
-    print("Max graph size =", max_nb_sommets)
     print("mean =", dataset.mean, " std =", dataset.std)
     print("tot_0 =", tot_0, " tot_1 =", tot_1)
