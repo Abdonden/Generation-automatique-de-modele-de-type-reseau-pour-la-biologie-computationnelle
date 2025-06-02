@@ -5,6 +5,7 @@ from torch_geometric.loader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from generate_dataset import MyData
+from temporal_prediction import *
 from Models import *
 
 
@@ -34,7 +35,7 @@ def test_model(model, dloader):
 
             b = batch.batch.to(device)
 
-            (predxy,predyx), _ = model (b,feats,edges, src_idx, dst_idx)
+            n_emb, (predxy,predyx), _ = model (b,feats,edges, src_idx, dst_idx)
 
 
 
@@ -57,6 +58,7 @@ n_datas = len(dataset)
 trainset = dataset[:int(n_datas*0.9)]
 testset = dataset[int(n_datas*0.9):]
 batch_size = len(trainset)
+print ("batch_size=",batch_size)
 dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 testloader = DataLoader(testset, batch_size=len(testset))
 
@@ -70,15 +72,15 @@ criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 # === Instanciation du modèle et optimiseur ===
 out_channels=16
-model_gcn = GCN(out_channels = out_channels, dropout=0.1)
+model_gcn = GCN(out_channels = out_channels, dropout=0.4)
 model_gcn.to(device)
 
 model = model_gcn
-ep_model = MLP(out_channels*3, 1,out_channels*3, dropout=0.1).to(device).float()
-tmp_model= MLP(out_channels*3, 512,out_channels*3, dropout=0.1).to(device).float()
+ep_model = MLP(out_channels*3, 1,out_channels*3, dropout=0).to(device).float()
+tmp_model= MLP(out_channels, 10*512,out_channels, dropout=0).to(device).float()
 
 optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(ep_model.parameters()),
+        list(model.parameters()) + list(ep_model.parameters()) + list(tmp_model.parameters()),
         lr=1e-3,weight_decay=1e-5)
 #scheduler = ReduceLROnPlateau(optimizer, factor=0.1, patience=100) 
 n=0
@@ -109,7 +111,8 @@ for i,epoch in enumerate(range(50000000000)):
 
         b = batch.batch.to(device)
 
-        (predxy, predyx), _ = model (b,feats,edges, src_idx, dst_idx)
+        n_embeddings, (predxy, predyx), _ = model (b,feats,edges, src_idx, dst_idx)
+
 
         n_positives = labels.sum()
         n_negatives = len(labels)-n_positives
@@ -117,16 +120,17 @@ for i,epoch in enumerate(range(50000000000)):
 
 
 
-        # dir_loss: prediction de la direction (main task)
+        # dir_loss: prediction de la direction des arcs (main task)
         # ep_loss : prediction de la présence d'un arc
         # antisym_loss: penalité sur l'antisymétrie
         #temporal_loss: penalité de reconstruction sur les séries temporelles TODO
         dir_loss = criterion(predxy.squeeze() , labels.float())
         ep_loss = evaluate_edge_prediction_loss(model, ep_model, batch, mask_ratio=0.1)
+        temporal_loss = evaluate_timeseries_reconstruction(n_embeddings, feats, tmp_model)
 
         antisym_loss = ((F.sigmoid(predxy) + F.sigmoid(predyx)-1)**2).mean()
         
-        main_loss = dir_loss + ep_loss + alpha*antisym_loss
+        main_loss = dir_loss + ep_loss + alpha*antisym_loss + temporal_loss
 
         main_loss.backward()
         old_lr = optimizer.param_groups[0]['lr']
@@ -140,6 +144,9 @@ for i,epoch in enumerate(range(50000000000)):
         n_examples += n_batched_examples
         writer.add_scalar("batch/dir_loss_train", dir_loss, n)
         writer.add_scalar("batch/ep_loss_train",ep_loss, n)
+        writer.add_scalar("batch/tmp_loss_train",temporal_loss, n)
+        writer.add_scalar("batch/train",main_loss, n)
+
         n+=1
 
     avg_loss = total_loss / n_examples

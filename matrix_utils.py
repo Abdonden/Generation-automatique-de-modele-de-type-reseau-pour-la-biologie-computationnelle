@@ -5,13 +5,18 @@ from torch_geometric.utils import to_dense_adj, add_self_loops  # Utilitaires po
 import re                      # Pour les expressions régulières (extraction d’ID de fichiers)
 import os                      # Pour les opérations système (création de dossiers)
 
+# Variable pour compter les modèles traités
+compteur_modeles_traites = 0  #ajouter pour filtrer
+
 #Assure que tous les model_id soient formatés à 4 chiffres, par ex. 15 devient 0015
 def pad_model_id(model_id):
     """Formate l'ID sur 4 chiffres pour un nom de fichier homogène."""
     return f"{int(model_id):04d}"
 
+
 # Fonction principale de traitement de fichier SBML
 def generer_matrix(nom_fichier, model_id):
+    global compteur_modeles_traites  #ajouter pour filtrer
 # Affiche le fichier en cours de traitement.
     model_id_str = pad_model_id(model_id)
     print(f"\n📂 Traitement du fichier : {nom_fichier} (ID: {model_id_str})")
@@ -23,12 +28,21 @@ def generer_matrix(nom_fichier, model_id):
         print(f"❌ Erreur : Impossible de lire le modèle SBML : {nom_fichier}")
         return
 #Crée un dictionnaire {id_espece: index}.
-#model.getListOfSpecies():C'est une méthode de libSBML qui  donne la liste de toutes les espèces chimiques (molécules, protéines, etc.) dans le  modèle SBML.
+#model.getListOfSpecies():C'est une méthode de libSBML qui  donne la liste de toutes les espèces chimiques  dans le  modèle SBML.
 
 # cette ligne crée un dictionnaire species dont :Clé = l'identifiant (string) de chaque espèce (par ex : "ATP", "glucose", etc.)
 #                                               :Valeur = un numéro unique (son index dans la liste)
 #enumerate(...)  donne un index i pour chaque espèce s   s.getId() donne son nom (ou ID)
     species = {s.getId(): i for i, s in enumerate(model.getListOfSpecies()) if not(s.getBoundaryCondition())}
+
+     #ajouter pour filtrer
+    #Filtration : ignore les modèles avec plus de 20 espèces
+    if len(species) > 20:
+        print(f"⚠️ Ignoré : {nom_fichier} contient {len(species)} espèces (>20)")
+        return
+    # Incrémente le compteur
+    compteur_modeles_traites += 1
+
 
 # Trie les nœuds dans l'ordre de leurs indices.
     ordered_nodes = [s for s, idx in sorted(species.items(), key=lambda x: x[1])]
@@ -103,8 +117,8 @@ def generer_matrix(nom_fichier, model_id):
 #Appelle generer_matrix si l’ID est trouvé
 
 # Dossier contenant les fichiers SBML
-#dossier_sbml = "biomodels"
-dossier_sbml = "newmodels"
+dossier_sbml = "biomodels"
+#dossier_sbml = "newmodels"
  
 # Récupère tous les fichiers .xml dans le dossier
 tous_les_fichiers = [
@@ -121,6 +135,14 @@ fichiers_tries = sorted(
 
 # Garde les 100 premiers fichiers
 fichiers_a_traiter = fichiers_tries #fichiers_tries[:204]
+# 🔴 Supprime tous les anciens fichiers .pt pour repartir de zéro
+for dossier in ["adj", "edges", "interactions"]:
+    if os.path.exists(dossier):
+        for f in os.listdir(dossier):
+            if f.endswith(".pt"):
+                os.remove(os.path.join(dossier, f))
+print("🧹 Tous les anciens fichiers .pt ont été supprimés.\n")
+
 
 # Traitement
 for fichier in fichiers_a_traiter:
@@ -134,7 +156,8 @@ for fichier in fichiers_a_traiter:
 #print ("FINAL")
 #generer_matrix("biomodels/BIOMD0000000007.xml",7)
 
-
+# 🔴 Affiche le total de modèles traités
+print("\n🔎 Nombre total de modèles traités (≤20 espèces) :", compteur_modeles_traites)
 
 
 

@@ -8,7 +8,6 @@ import numpy as np
 from scipy.interpolate import interp1d
 
 # Répertoires où se trouvent les fichiers de données
-FEATURES_DIR = "features/1_traj"
 FEATURES_DIR = "features"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
@@ -23,20 +22,19 @@ class CRNDataset(Dataset):
 
     def __len__(self):
         return len(self.model_ids)
-    
+
     def compute_statistics(self):
-        #features = [self[i]["features"] for i in range(len(self))]
         features = []
-        for i in range (len(self)):
+        for i in range(len(self)):
             try:
                 features.append(self[i]["features"])
             except:
-               pass 
+                pass
         total_sum = sum([feat.sum() for feat in features])
         nb_total = sum([torch.tensor(feat.shape).prod() for feat in features])
         self.mean = total_sum / nb_total
 
-        variance = sum([((feat - self.mean)**2).sum() for feat in features]) / nb_total
+        variance = sum([((feat - self.mean) ** 2).sum() for feat in features]) / nb_total
         self.std = torch.sqrt(variance)
 
         self.min = min([feat.min() for feat in features])
@@ -51,12 +49,6 @@ class CRNDataset(Dataset):
         interactions_path = os.path.join(INTERACTIONS_DIR, f"interaction_indices_{model_id_str}.pt")
 
         features = torch.load(features_path, weights_only=True)
-
-        #if (torch.any(features <= 0)):
-        #    print ("error: negative features for instance ",i)
-        #    raise ValueError
-
-        #features = torch.log(features)
         edges = torch.load(edges_path, weights_only=True)
         interactions = torch.load(interactions_path, weights_only=True)
         interactions = torch.tensor([[int(i), int(j)] for i, j in interactions])
@@ -67,13 +59,9 @@ class CRNDataset(Dataset):
         maximums = maximums.unsqueeze(-1).expand(features.shape)
         features = features / maximums
 
-
-
         return {
             "model_id": model_id_str,
-            #"features": (features - self.mean) / self.std,
-            #"features":features,
-            "features":features,
+            "features": features,
             "edges": edges,
             "interactions": interactions
         }
@@ -84,7 +72,16 @@ def get_available_model_ids():
     for fname in os.listdir(FEATURES_DIR):
         if fname.startswith("features_") and fname.endswith(".pt"):
             model_id = fname.replace("features_", "").replace(".pt", "")
-            model_ids.append(int(model_id))
+            model_id_str = str(model_id).zfill(4)
+
+            edge_path = os.path.join(EDGE_DIR, f"edge_index_{model_id_str}.pt")
+            inter_path = os.path.join(INTERACTIONS_DIR, f"interaction_indices_{model_id_str}.pt")
+            feat_path = os.path.join(FEATURES_DIR, f"features_{model_id_str}.pt")
+
+            if os.path.exists(edge_path) and os.path.exists(inter_path) and os.path.exists(feat_path):
+                model_ids.append(int(model_id))
+            else:
+                print(f"⚠️ Fichiers manquants pour modèle {model_id_str}, ignoré.")
     return sorted(model_ids)
 
 # Fonction pour lister les triplets de fichiers
@@ -100,51 +97,37 @@ def lister_les_triplets(model_ids):
         triplets.append(triplet)
     return triplets
 
-def check_if_edge_exists (edge, interaction_indices):
-    """
-        Vérifie si un arc est déjà présent dans la liste des indices (slow mais bon)
-    """
-
+def check_if_edge_exists(edge, interaction_indices):
     for i in range(len(interaction_indices)):
         e = interaction_indices[i]
         if e[0] == edge[0] and e[1] == edge[1]:
             return True
     return False
 
-def valid_trajectories (feats):
-    """
-        identifies the set of indices where each trajectory is valid (no NaN)
-    """
+def valid_trajectories(feats):
     ret = []
     n_species, n_trajectories, n_points = feats.shape
-    for i in range (n_trajectories):
+    for i in range(n_trajectories):
         ok = True
         for s in range(n_species):
             if torch.any(torch.isnan(feats[s][i])):
-                print ("nan detected in traj ", i, " of specie ", s)
-                ok=False
-                raise ValueError ("One trajectory rejected")
+                print("nan detected in traj", i, "of specie", s)
+                ok = False
+                raise ValueError("One trajectory rejected")
         if ok:
             ret.append(i)
-    #if ret == []:
-    #    raise ValueError ("no valid trajectory for this model")
     return torch.tensor(ret)
 
-
 def logarithmic_resampling(traj):
-        data = traj
-        # linear times
-        t = np.arange(1,len(data)+1)
-        # logarithmic times
-        t_log = np.logspace(np.log10(t[0]), np.log10(t[-1]), num=len(t), base=10.0)
-        # interpolate
-        interp_func = interp1d(t, data, kind='linear', fill_value="extrapolate")
-        data_log = interp_func(t_log)
-        return torch.tensor(data_log)
+    data = traj
+    t = np.arange(1, len(data) + 1)
+    t_log = np.logspace(np.log10(t[0]), np.log10(t[-1]), num=len(t), base=10.0)
+    interp_func = interp1d(t, data, kind='linear', fill_value="extrapolate")
+    data_log = interp_func(t_log)
+    return torch.tensor(data_log)
 
-   
 if __name__ == "__main__":
-    # Récupérer tous les modèles automatiquement
+    # Récupérer les modèles disponibles (ceux avec les trois fichiers existants)
     model_ids = get_available_model_ids()
     print(f" Modèles trouvés : {[str(mid).zfill(4) for mid in model_ids]}")
 
@@ -155,90 +138,63 @@ if __name__ == "__main__":
 
     # Création du Dataset
     dataset = CRNDataset(model_ids)
-    #dataset.compute_statistics()
-    #print(f"mean = {dataset.mean:.4f}, std = {dataset.std:.4f}")
+    # dataset.compute_statistics()
 
-    # Transformation en Data (PyG) et sauvegarde
     datas = []
-    tot_0, tot_1 = 0,0
-
+    tot_0, tot_1 = 0, 0
     max_nb_sommets = 0
+
     for i in range(len(dataset)):
-        #try:
-            entry = dataset[i]
-            identifier = entry["model_id"]
-            feats = entry["features"]
-            edges = entry["edges"]
-            target = entry["interactions"]
+        entry = dataset[i]
+        identifier = entry["model_id"]
+        feats = entry["features"]
+        edges = entry["edges"]
+        target = entry["interactions"]
 
-            try:
-                traj_idx = valid_trajectories(feats)
-            except Exception as e:
-                print ("skip model: ", identifier)
-                continue
-            feats = feats[:,traj_idx,:]
-            if len(traj_idx) == 1:
-                feats = feats.permute(-1,1,0)
+        try:
+            traj_idx = valid_trajectories(feats)
+        except Exception as e:
+            print("skip model:", identifier)
+            continue
 
+        feats = feats[:, traj_idx, :]
+        if len(traj_idx) == 1:
+            feats = feats.permute(-1, 1, 0)
 
-                # LOGARITHMIC RESCALE
-               # feats = feats.permute(-1,1,0)
-               # feats = feats.squeeze()
-               # n_trajs = []
-               # for s in range(len(feats)):
-               #     n_trajs.append(logarithmic_resampling(feats[s,:]))
-               # feats = torch.stack(n_trajs)
-               # feats = feats.unsqueeze(1)
+        if max_nb_sommets < len(feats):
+            max_nb_sommets = len(feats)
 
+        n_target = []
+        n_labels = []
 
+        for j in range(len(target)):
+            src, dst = target[j][0], target[j][1]
+            n_edge = torch.tensor([src, dst])
+            inverse = torch.tensor([dst, src])
 
-            if max_nb_sommets < len(feats):
-                max_nb_sommets = len(feats)
+            if not (check_if_edge_exists(inverse, target)):
+                n_target.append(torch.tensor([dst, src]))
+                n_labels.append(torch.tensor(0))
+                n_target.append(n_edge)
+                n_labels.append(torch.tensor(1))
+                tot_0 += 1
+                tot_1 += 1
+            else:  # ANTISYM
+                n_target.append(n_edge)
+                n_labels.append(torch.tensor(1))
+                tot_1 += 1
 
-
-            n_target = []
-            n_labels = []
-
-            for j in range(len(target)):
-                src, dst = target[j][0], target[j][1]
-
-                n_edge = torch.tensor([src,dst])
-
-                inverse = torch.tensor([dst,src])
-                #n_target.append(n_edge)
-                if not(check_if_edge_exists(inverse, target)):
-                   n_target.append(torch.tensor([dst,src]))
-                   n_labels.append(torch.tensor(0))
-                   n_target.append(n_edge)
-                   n_labels.append(torch.tensor(1))
-                   tot_0 += 1
-                   tot_1 += 1
-                else: #ANTISYM now
-                   n_target.append(n_edge)
-                   n_labels.append(torch.tensor(1))
-                   tot_1 += 1
-
-            
-            if n_target == []:
-                print ("ERROR: empty for i=",i, " target=", target, " model=", identifier)
-                #crash
-            else:
-                n_target = torch.stack(n_target)
-                n_labels = torch.stack(n_labels)
-
-
-
-                #feats = (feats - feats.mean())/feats.std() 
-                data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels)
-                datas.append(data)
-        #except Exception as e:
-        #    print (f"[pass {i}]: {e}")
-        #    continue
+        if n_target == []:
+            print("ERROR: empty for i=", i, " target=", target, " model=", identifier)
+        else:
+            n_target = torch.stack(n_target)
+            n_labels = torch.stack(n_labels)
+            data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels)
+            datas.append(data)
 
     torch.save(datas, "dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")
-    print ("Total size= ",len(datas))
-    print ("Max graph size=",max_nb_sommets)
-    print ("mean=",dataset.mean, " std=", dataset.std)
-    print ("tot_0=", tot_0, " tot_1=", tot_1)
-
+    print("Total size =", len(datas))
+    print("Max graph size =", max_nb_sommets)
+    print("mean =", dataset.mean, " std =", dataset.std)
+    print("tot_0 =", tot_0, " tot_1 =", tot_1)

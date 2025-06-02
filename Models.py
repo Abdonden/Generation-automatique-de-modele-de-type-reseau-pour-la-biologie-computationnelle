@@ -7,6 +7,7 @@ from edge_prediction import *
 
 
 
+
 class GRUEncoder(nn.Module):
     def __init__(self, input_dim, hidden_dim=128, output_dim=64, num_layers=1):
         super().__init__()
@@ -209,7 +210,7 @@ class GCN(torch.nn.Module):
 
 
 
-        return (predxy, predyx), xy
+        return node_embeddings, (predxy, predyx), xy
 
 
 
