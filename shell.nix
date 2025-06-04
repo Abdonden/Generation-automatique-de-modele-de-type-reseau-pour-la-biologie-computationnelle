@@ -7,6 +7,7 @@ let
 				cudaSupport = true;
 				};
 			};
+  lib = pkgs.lib;
   diffrax = pkgs.callPackage ./diffrax.nix {pkgs=pkgs;};
   wadler-lindig = pkgs.callPackage ./wadler-lindig.nix {pkgs=pkgs;};
   sympy2jax= pkgs.callPackage ./sympy2jax.nix {pkgs=pkgs;};
@@ -38,6 +39,11 @@ in pkgs.mkShell {
     pkgs.python312Packages.matplotlib
 
 
+    pkgs.python312Packages.huggingface-hub
+    pkgs.python312Packages.transformers
+
+
+
 
     pkgs.python312Packages.pip
     pkgs.python312Packages.requests
@@ -62,6 +68,12 @@ in pkgs.mkShell {
     export PYTHONPATH="$PIP_PREFIX/${pkgs.python312.sitePackages}:$(pwd)/CRNTools/:$PYTHONPATH"
     export PATH="$PIP_PREFIX/bin:$PATH"
     unset SOURCE_DATE_EPOCH
+
+    export LD_LIBRARY_PATH=${lib.getLib pkgs.gcc}/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=${pkgs.expat}/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=${pkgs.libz}/lib:$LD_LIBRARY_PATH
+
 
   '';
 }

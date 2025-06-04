@@ -10,9 +10,19 @@ from graph_utils import *
 from tqdm import tqdm
 
 # Répertoires où se trouvent les fichiers de données
-FEATURES_DIR = "features"
+FEATURES_DIR = "../tellurium/variable_timesteps/features"
+#FEATURES_DIR = "features"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
+
+
+def divide_by_max(X, eps=1e-8):
+    """
+        divise chaque ligne par son max
+    """
+    max_vals, _ = X.max(dim=1, keepdim=True)  # max par ligne, shape (num_rows, 1)
+    return X / (max_vals + eps)
+
 
 # Définition d'une classe Dataset personnalisée
 class CRNDataset(Dataset):
@@ -21,6 +31,7 @@ class CRNDataset(Dataset):
         self.mean = 0
         self.std = 1
         self.min, self.max = None, None
+        self.max_len = None #maximum time serie size
 
     def __len__(self):
         return len(self.model_ids)
@@ -42,6 +53,34 @@ class CRNDataset(Dataset):
         self.min = min([feat.min() for feat in features])
         self.max = max([feat.max() for feat in features])
 
+    def longest_timeserie(self):
+        max_len=0
+        for i in range(len(self)):
+            feats = self[i]["features"] #liste de features (une matrice par condition initiales)
+            for j in range(len(feats)):
+                featj = feats[j]
+                max_len = max(max_len, featj.size(-1))
+        self.max_len = max_len
+        return max_len
+    def add_padding(self, feati):
+        """
+            adds the padding to a feature matrix and generates the mask
+        """
+        if self.max_len is None:
+            raise ValueError ("add_padding with no max len")
+        padding_size = self.max_len - feati.size(-1)
+        padding = torch.zeros((feati.size(0), padding_size))
+        newfeat = torch.cat((feati, padding), dim=-1)
+        
+        mask = torch.zeros_like(newfeat)
+        mask = mask == 0
+        mask[:,:feati.size(-1)]=False
+        return newfeat, mask
+
+
+
+
+
     def __getitem__(self, idx):
         model_id = self.model_ids[idx]
         model_id_str = str(model_id).zfill(4)
@@ -56,17 +95,44 @@ class CRNDataset(Dataset):
         interactions = torch.tensor([[int(i), int(j)] for i, j in interactions])
 
         eps = torch.tensor(1e-80)
-        features = torch.max(features, eps)
-        maximums = features.max(dim=-1)[0]
-        maximums = maximums.unsqueeze(-1).expand(features.shape)
-        features = features / maximums
 
+        #fft_complex = torch.fft.fft(features, dim=1)
+        #amplitude = torch.abs(fft_complex)
+        #phase = torch.angle(fft_complex)
+
+       # features = torch.max(features, eps)
+
+        #amplitude = divide_by_max(amplitude)
+        #phase = divide_by_max(phase)
+
+
+        for i in range(len(features)):
+            features[i] = divide_by_max(features[i], eps=eps)
+
+        #features = torch.cat([features, amplitude, phase], dim=-1)
+
+        if self.max_len is not None:
+            masks = []
+            for i in range (len(features)):
+                features[i], mask = self.add_padding(features[i])
+                masks.append(mask)
+            features = torch.stack(features)
+            masks = torch.stack(masks)
+
+            return {
+                "model_id": model_id_str,
+                "features": features.transpose(0,1),
+                "edges": edges,
+                "interactions": interactions,
+                "masks": masks.transpose(0,1)
+            }
         return {
             "model_id": model_id_str,
             "features": features,
             "edges": edges,
             "interactions": interactions
         }
+
 
 # Fonction pour obtenir les ID des modèles disponibles
 def get_available_model_ids():
@@ -129,6 +195,7 @@ def process_entry(entry):
         feats = entry["features"]
         edges = entry["edges"]
         target = entry["interactions"]
+        masks = entry["masks"]
 
         try:
             traj_idx = valid_trajectories(feats)
@@ -169,7 +236,7 @@ def process_entry(entry):
         else:
             n_target = torch.stack(n_target)
             n_labels = torch.stack(n_labels)
-            data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels)
+            data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels, masks=masks)
             return data, tot_0, tot_1
 
 
@@ -186,6 +253,7 @@ if __name__ == "__main__":
 
     # Création du Dataset
     dataset = CRNDataset(model_ids)
+    max_len = dataset.longest_timeserie()
     # dataset.compute_statistics()
 
     datas = []
@@ -204,9 +272,9 @@ if __name__ == "__main__":
         
         #subgraphs:
 
-        if i < 297:
+        if i < int (0.9*len(dataset)): #stop à 90%
             for num_hops in range(1, int(data.x.size(0)-2)):
-                sub_datas, n_0, n_1 = extract_all_subgraphs(data, entry["interactions"])
+                sub_datas, n_0, n_1 = extract_all_subgraphs(data, entry["interactions"], num_hops=num_hops, only_connected_edges_labels=False)
                 custom_dataset = custom_dataset + sub_datas
                 tot_0 += n_0
                 tot_1 += n_1

@@ -15,6 +15,16 @@ device = torch.device("cuda:0") #processeur = cpu, carte graphique = cuda
 
 writer = SummaryWriter(comment="")
 
+def compute_grad(model):
+        total_grad_norm = 0.0
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                grad_norm = param.grad.norm().item()
+                total_grad_norm += grad_norm
+                print(f" - {name} grad norm: {grad_norm:.6f}")
+        print(f" - Total gradient norm: {total_grad_norm:.6f}")
+
+
 
 def test_model(model, dloader):
     model.eval()
@@ -126,27 +136,28 @@ testset = standard_tst
 #n_datas = len(dataset)
 #trainset = dataset[:int(n_datas*0.9)]
 #testset = dataset[int(n_datas*0.9):]
-batch_size = 100 #len(trainset)
+batch_size = 50 #len(trainset)
 print ("batch_size=",batch_size)
 dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 testloader = DataLoader(testset, batch_size=len(testset))
 
 #examples statistics
-nb_positive = torch.tensor(8514)
-nb_negative = 6921
+nb_positive = torch.tensor(22517)
+nb_negative = 20924
 pos_weight = nb_negative/nb_positive
 
 criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
 # === Instanciation du modèle et optimiseur ===
+in_channels = 512*3
 out_channels=16
-model_gcn = GCN(out_channels = out_channels, dropout=0.4)
+model_gcn = GCN(nb_points=in_channels, out_channels = out_channels, dropout=0.4)
 model_gcn.to(device)
 
 model = model_gcn
 ep_model = MLP(out_channels*3, 1,out_channels*3, dropout=0).to(device).float()
-tmp_model= MLP(out_channels, 10*512,out_channels, dropout=0).to(device).float()
+tmp_model= MLP(out_channels, 10*in_channels,out_channels, dropout=0).to(device).float()
 
 optimizer = torch.optim.AdamW(
         list(model.parameters()) + list(ep_model.parameters()) + list(tmp_model.parameters()),
@@ -166,6 +177,7 @@ for i,epoch in enumerate(range(50000000000)):
     for j,batch in enumerate(dataloader):
         n+=1
         b_loss, b_size =train_model(model, batch) #on real_batch
+        #compute_grad(model)
         total_loss += b_loss
         n_examples += b_size
 
@@ -207,3 +219,5 @@ for i,epoch in enumerate(range(50000000000)):
 # === Perte après entraînement ===
 loss_after = evaluate_model(model_gcn, batch_data, interaction_indices_batch, criterion)
 print(f"\n📊 Perte moyenne après entraînement : {loss_after:.4f}")
+
+

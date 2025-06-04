@@ -59,7 +59,7 @@ def is_isolated(node_idx, edge_index):
 
 
 
-def extract_2hop_subgraph(node_idx, data,interaction_indices, num_hops=2):
+def extract_2hop_subgraph(node_idx, data,interaction_indices, num_hops=2, only_connected_edges_labels=True):
     """
     Extrait le sous-graphe à num_hops sauts autour du noeud node_idx.
 
@@ -67,6 +67,7 @@ def extract_2hop_subgraph(node_idx, data,interaction_indices, num_hops=2):
         node_idx (int): index du noeud central (int)
         data (Data): graphe PyG (avec data.edge_index, data.x, etc.)
         num_hops (int): nombre de sauts (par défaut 2)
+        only_connected_edges_labels: True génère  les labels (target) uniquement pour les arcs dont node_idx est un sommet
 
     """
     if is_isolated(node_idx, data.edge_index):
@@ -95,7 +96,7 @@ def extract_2hop_subgraph(node_idx, data,interaction_indices, num_hops=2):
     for edge_ in interaction_indices:
         src, dst = edge_
         edge = torch.stack([src,dst])
-        if src == node_idx or dst == node_idx: #prediction que pour les arcs connectés à notre sommet (on a toute l'info locale)
+        if only_connected_edges_labels == False or (src == node_idx or dst == node_idx): #prediction que pour les arcs connectés à notre sommet (on a toute l'info locale)
             if check_if_edge_exists(edge, edge_index):
                 ys.append(edge)
                 labels.append(1)
@@ -126,12 +127,12 @@ def extract_subgraph (data,interaction_indices, max_try=10):
         max_try -= 1
     return None
 
-def extract_all_subgraphs(data, interaction_indices, num_hops=2):
+def extract_all_subgraphs(data, interaction_indices, num_hops=2, only_connected_edges_labels=True):
     num_nodes = data.x.size(0)
     ret = []
     tot_0, tot_1 = 0 ,0
     for i in range(num_nodes):
-        sub_data_ = extract_2hop_subgraph(torch.tensor([i]), data, interaction_indices, num_hops=num_hops)
+        sub_data_ = extract_2hop_subgraph(torch.tensor([i]), data, interaction_indices, num_hops=num_hops, only_connected_edges_labels=only_connected_edges_labels)
         if not (sub_data_ is None):
             sub_data, n_0, n_1 = sub_data_
             tot_0 += 1

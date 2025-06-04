@@ -39,7 +39,7 @@ class PositionalEncoding(nn.Module):
             x: Tensor, shape ``[seq_len, batch_size, embedding_dim]``
         """
         x = x.transpose(0,1)
-        x = x + self.pe[:x.size(0)]
+        x = x + self.pe[:x.size(1)]
         x = x.transpose(0,1)
         return self.dropout(x)
 
@@ -57,7 +57,6 @@ class PermutationInvariantTransformer(nn.Module):
         """
         super(PermutationInvariantTransformer, self).__init__()
 
-
         # Embedding pour chaque série (input_dim -> d_model)
         self.embedding = nn.Linear(num_features, d_model)
 
@@ -65,23 +64,36 @@ class PermutationInvariantTransformer(nn.Module):
         self.positional_encoding = PositionalEncoding(d_model)
 
         # Transformer Encoder
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Couche de sortie pour obtenir une représentation finale
         self.fc_out = nn.Linear(d_model, output_size) 
 
-    def forward(self, x):
+    def forward(self, x, mask):
         # Embedding des séries temporelles
-        x = self.embedding(x)  # (batch_size * num_series, seq_len, d_model)
+        #x = self.embedding(x)  # (batch_size * num_series, seq_len, d_model)
+
+        x = x.unsqueeze(-1)
+        print ("unsqueeze=",x.shape)
+        x = self.embedding(x)
+        nb_nodes, nb_trajs, nb_pts, d_model = x.size()
+
+        print (x.shape, mask.shape)
 
         # Ajouter les encodages de position
         x = self.positional_encoding(x)  # (batch_size * num_series, seq_len, d_model)
+        x = x.reshape(nb_nodes*nb_trajs, nb_pts, d_model)
 
+        mask = mask.reshape(nb_nodes*nb_trajs, nb_pts)
 
-        # Passer dans l'encodeur Transformer
-        x = self.transformer_encoder(x)  # (seq_len, batch_size * num_series, d_model)
+        print (x.shape, mask.shape)
+        x = self.transformer_encoder(x, src_key_padding_mask=mask)
 
+        print (x.shape)
+        crash
+
+        x = x.permute(0,2,1)
 
         # Retourner à la forme originale : (batch_size * num_series, d_model)
         x = x.mean(dim=1)  # Calculer la moyenne sur la séquence (mean pooling)
@@ -164,8 +176,8 @@ class GCN(torch.nn.Module):
         self.n_pts = nb_points
 
         super().__init__()
-        #self.embedder= PermutationInvariantTransformer(nb_points, out_channels, out_channels, 4, 2, dropout=dropout) 
-        self.embedder=Embedder(nb_points, out_channels, out_channels*2, dropout=dropout)
+        self.embedder= PermutationInvariantTransformer(1, out_channels, out_channels, 4, 2, dropout=dropout) 
+        #self.embedder=Embedder(nb_points, out_channels, out_channels*2, dropout=dropout)
         self.conv1 = GCNResnet(out_channels, out_channels, dropout=dropout)
         self.conv2 = GCNResnet(out_channels, out_channels, dropout=dropout)
         self.conv3 = GCNResnet(out_channels, out_channels, dropout=dropout)
