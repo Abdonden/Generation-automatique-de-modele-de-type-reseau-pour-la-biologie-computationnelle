@@ -32,6 +32,7 @@ def test_model(model, dloader):
     tot_loss = 0
     with torch.no_grad():
         for batch in dloader:
+            batch = batch.to(device)
             feats, edges = batch.x, batch.edge_index
             feats, edges = feats.to(device).float(), edges.to(device)
 
@@ -46,7 +47,7 @@ def test_model(model, dloader):
 
             b = batch.batch.to(device)
 
-            n_emb, (predxy,predyx), _ = model (b,feats,edges, src_idx, dst_idx)
+            n_emb, (predxy,predyx), _ = model (batch, src_idx, dst_idx)
 
 
 
@@ -57,7 +58,7 @@ def test_model(model, dloader):
             
 
 
-def train_model(model, batch):
+def train_model(i,model, batch):
     model.train()
     optimizer.zero_grad()
     batch = batch.to(device)
@@ -75,8 +76,13 @@ def train_model(model, batch):
 
     b = batch.batch.to(device)
 
-    n_embeddings, (predxy, predyx), _ = model (b,feats,edges, src_idx, dst_idx)
+    n_embeddings, (predxy, predyx), _ = model (batch, src_idx, dst_idx)
 
+    if batch.x.isnan().any() or batch.times.isnan().any():
+        raise ValueError (f"[batch {i}] input is nan {(batch.x.isnan().any(), batch.times.isnan().any())}")
+
+    if n_embeddings.isnan().any() or predxy.isnan().any():
+        raise ValueError (f"[batch {i}] prediction is nan {(n_embeddings.isnan().any(), predxy.isnan().any())}")
 
     n_positives = labels.sum()
     n_negatives = len(labels)-n_positives
@@ -122,22 +128,23 @@ dst = src+1
 standard_dataset = torch.load("dataset_sat.pt")
 sub_dataset = torch.load("sub_dataset_sat.pt") #subgraphs
 
-dataset = standard_dataset + sub_dataset
+dataset = standard_dataset #+ sub_dataset
 
 len_standard = len(standard_dataset)
 print (int(len_standard*0.9))
 standard_trn, standard_tst = standard_dataset[:int(len_standard*0.9)], standard_dataset[int(len_standard*0.9):]
 
 
-trainset = standard_trn + sub_dataset
+trainset = standard_trn #+ sub_dataset
 testset = standard_tst
 
 
 #n_datas = len(dataset)
 #trainset = dataset[:int(n_datas*0.9)]
 #testset = dataset[int(n_datas*0.9):]
-batch_size = 50 #len(trainset)
+batch_size = 10 #len(trainset)
 print ("batch_size=",batch_size)
+#dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=False)
 dataloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
 testloader = DataLoader(testset, batch_size=len(testset))
 
@@ -150,14 +157,16 @@ criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
 # === Instanciation du modèle et optimiseur ===
-in_channels = 512*3
+in_channels = 512
 out_channels=16
-model_gcn = GCN(nb_points=in_channels, out_channels = out_channels, dropout=0.4)
+n_trajectory = 1
+
+model_gcn = GCN(nb_points=in_channels, out_channels = out_channels, dropout=0.2)
 model_gcn.to(device)
 
 model = model_gcn
 ep_model = MLP(out_channels*3, 1,out_channels*3, dropout=0).to(device).float()
-tmp_model= MLP(out_channels, 10*in_channels,out_channels, dropout=0).to(device).float()
+tmp_model= MLP(out_channels, n_trajectory*in_channels,out_channels, dropout=0).to(device).float()
 
 optimizer = torch.optim.AdamW(
         list(model.parameters()) + list(ep_model.parameters()) + list(tmp_model.parameters()),
@@ -176,7 +185,7 @@ for i,epoch in enumerate(range(50000000000)):
     n_examples = 0
     for j,batch in enumerate(dataloader):
         n+=1
-        b_loss, b_size =train_model(model, batch) #on real_batch
+        b_loss, b_size =train_model(n,model, batch) #on real_batch
         #compute_grad(model)
         total_loss += b_loss
         n_examples += b_size

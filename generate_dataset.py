@@ -10,7 +10,7 @@ from graph_utils import *
 from tqdm import tqdm
 
 # Répertoires où se trouvent les fichiers de données
-FEATURES_DIR = "../tellurium/variable_timesteps/features"
+FEATURES_DIR = "../tellurium/variable_timesteps_512/features"
 #FEATURES_DIR = "features"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
@@ -56,10 +56,12 @@ class CRNDataset(Dataset):
     def longest_timeserie(self):
         max_len=0
         for i in range(len(self)):
-            feats = self[i]["features"] #liste de features (une matrice par condition initiales)
-            for j in range(len(feats)):
-                featj = feats[j]
-                max_len = max(max_len, featj.size(-1))
+            feats = self[i]#liste de features (une matrice par condition initiales)
+            if feats != None:
+                feats = feats["features"] 
+                for j in range(len(feats)):
+                    featj = feats[j]
+                    max_len = max(max_len, featj.size(-1))
         self.max_len = max_len
         return max_len
     def add_padding(self, feati):
@@ -72,9 +74,8 @@ class CRNDataset(Dataset):
         padding = torch.zeros((feati.size(0), padding_size))
         newfeat = torch.cat((feati, padding), dim=-1)
         
-        mask = torch.zeros_like(newfeat)
-        mask = mask == 0
-        mask[:,:feati.size(-1)]=False
+        mask = torch.ones_like(newfeat)
+        mask[:,:feati.size(-1)]=0
         return newfeat, mask
 
 
@@ -116,15 +117,28 @@ class CRNDataset(Dataset):
             for i in range (len(features)):
                 features[i], mask = self.add_padding(features[i])
                 masks.append(mask)
+            if features == []:
+                return None
             features = torch.stack(features)
+            features = features.transpose(0,1).float()
+            times = features[0].unsqueeze(0)
+            features = features[1:]
+
+            n_nodes = features.size(0)
+            times = times.expand(n_nodes, -1, -1)
+
+
             masks = torch.stack(masks)
+            masks = masks.transpose(0,1).bool()
+            masks = masks[1:]
 
             return {
                 "model_id": model_id_str,
-                "features": features.transpose(0,1),
+                "features": features,
                 "edges": edges,
                 "interactions": interactions,
-                "masks": masks.transpose(0,1)
+                "masks": masks,
+                "times":times
             }
         return {
             "model_id": model_id_str,
@@ -196,6 +210,7 @@ def process_entry(entry):
         edges = entry["edges"]
         target = entry["interactions"]
         masks = entry["masks"]
+        times = entry["times"]
 
         try:
             traj_idx = valid_trajectories(feats)
@@ -205,8 +220,8 @@ def process_entry(entry):
 
 
         feats = feats[:, traj_idx, :]
-        if len(traj_idx) == 1:
-            feats = feats.permute(-1, 1, 0)
+        #if len(traj_idx) == 1:
+        #    feats = feats.permute(-1, 1, 0)
 
 
         n_target = []
@@ -236,7 +251,7 @@ def process_entry(entry):
         else:
             n_target = torch.stack(n_target)
             n_labels = torch.stack(n_labels)
-            data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels, masks=masks)
+            data = MyData(x=feats, edge_index=edges, y=n_target, labels=n_labels, masks=masks, times=times)
             return data, tot_0, tot_1
 
 
@@ -262,6 +277,8 @@ if __name__ == "__main__":
 
     for i in tqdm(range(len(dataset))):
         entry = dataset[i]
+        if entry is None:
+            continue
         ret = process_entry (entry)
         if ret is None:
             continue
@@ -272,12 +289,12 @@ if __name__ == "__main__":
         
         #subgraphs:
 
-        if i < int (0.9*len(dataset)): #stop à 90%
-            for num_hops in range(1, int(data.x.size(0)-2)):
-                sub_datas, n_0, n_1 = extract_all_subgraphs(data, entry["interactions"], num_hops=num_hops, only_connected_edges_labels=False)
-                custom_dataset = custom_dataset + sub_datas
-                tot_0 += n_0
-                tot_1 += n_1
+    #    if i < int (0.9*len(dataset)): #stop à 90%
+    #        for num_hops in range(1, int(data.x.size(0)-2)):
+    #            sub_datas, n_0, n_1 = extract_all_subgraphs(data, entry["interactions"], num_hops=num_hops, only_connected_edges_labels=False)
+    #            custom_dataset = custom_dataset + sub_datas
+    #            tot_0 += n_0
+    #            tot_1 += n_1
 
 
 

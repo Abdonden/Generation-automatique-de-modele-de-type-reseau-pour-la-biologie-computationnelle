@@ -20,7 +20,7 @@ def evaluate_edge_prediction_loss(
     feats, edges = new_batch.x, new_batch.edge_index
 
     feats = feats.float()
-    n_emb, _, xy = gcn(new_batch.batch, feats, edges,src_idx, dst_idx)
+    n_emb, _, xy = gcn(new_batch, src_idx, dst_idx)
 
     pred = head_model(xy)
 
