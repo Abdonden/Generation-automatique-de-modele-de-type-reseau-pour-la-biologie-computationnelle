@@ -40,7 +40,7 @@ class MLP (torch.nn.Module):
 
 
 class TransformerEmbedder (nn.Module):
-    def __init__(self, n_pts, d_model, output_size, nhead=1, dropout=0, num_layers=4):
+    def __init__(self, n_pts, d_model, output_size, nhead=4, dropout=0, num_layers=1):
         super().__init__()
         self.lin_in = nn.Linear(1, d_model)
         self.time_in = nn.Linear(1,d_model)

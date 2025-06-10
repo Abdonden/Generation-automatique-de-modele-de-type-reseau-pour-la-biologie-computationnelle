@@ -9,6 +9,7 @@ from generate_dataset import MyData
 from temporal_prediction import *
 from Models import *
 
+torch.autograd.set_detect_anomaly(True)
 
 device = torch.device("cuda:0") #processeur = cpu, carte graphique = cuda
 #device = torch.device("cpu")
@@ -88,12 +89,16 @@ def train_model(i,model, batch):
     n_negatives = len(labels)-n_positives
     weights = (n_negatives/n_positives).to(device)
 
+    if not ((labels == 1)+(labels == 0)).all():
+        raise ValueError ("Labels != 0 or 1")
 
 
     # dir_loss: prediction de la direction des arcs (main task)
     # ep_loss : prediction de la présence d'un arc
     # antisym_loss: penalité sur l'antisymétrie
     #temporal_loss: penalité de reconstruction sur les séries temporelles TODO
+    predxy = torch.clamp(predxy, min=-30, max=30)
+
     dir_loss = criterion(predxy.squeeze() , labels.float())
     ep_loss = evaluate_edge_prediction_loss(model, ep_model, batch, mask_ratio=0.1)
     temporal_loss = evaluate_timeseries_reconstruction(n_embeddings, feats, tmp_model)
@@ -205,7 +210,7 @@ for i,epoch in enumerate(range(50000000000)):
 
 
     # Logs
-    if epoch % 500 == 0:
+    if epoch % 50 == 0:
         print(f"\n🔧 Norme des gradients à l'époque {epoch} :")
         total_grad_norm = 0.0
         for name, param in model.named_parameters():
