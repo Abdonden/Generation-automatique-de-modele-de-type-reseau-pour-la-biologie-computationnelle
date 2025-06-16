@@ -1,67 +1,70 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.nn import GCNConv, SAGEConv, GATv2Conv, global_mean_pool, global_max_pool
 
 from embedding import MLP
 from data import *
 
-# Idée: 
-#   1. En utilisant le même modele: projeter chaque série temporelle dans un espace latent H = f(X)
-#   2. Ajuster les coefficient d'une matrice A
-#   3. Caclculer X' = AH + eps avec eps un bruit blanc utilisant le *reparameterisation trick*
-#   4. Minimiser ||X' - X||
-
-# Notes, on pourrait appliquer l'étape 3 plusieurs fois (comme plusierus couches de GNN avec une matrice apprise)
 
 
-class TemporalEncoder (nn.Module):
-    """
-        Step 1: encodes the time series
-    """
-    def __init__ (self, n_points, n_species, hidden_size, dropout=0.2):
+
+class Encoder (nn.Module):
+    def __init__(self, n_species, d, dropout=0.1, num_layers = 1):
         super().__init__()
-        self.n_points, self.n_species = n_points, n_species
-        self.mlp = MLP(n_points, n_species,hidden_size, dropout=dropout)
+        self.h_0 = nn.Parameter(torch.randn(d)).reshape(1,1,d).repeat(num_layers, n_species, 1)
+        self.mdl = nn.RNN(1, d, num_layers=num_layers, batch_first=True)
 
-    def forward(self, x):
-        x = self.mlp(x)
+    def forward (self, x):
+        n_points = x.size(0)
+
+        return self.mdl(x, self.h_0)[0] # [n_species, n_timepoints, d]
+
+
+class CausalGNN (nn.Module):
+    def __init__(self, n_species, d, d_prime):
+        super().__init__()
+        self.A = nn.Parameter(torch.randn([n_species, n_species]))
+        self.W = nn.Linear(d,d_prime)
+
+    def forward (self, x):
+        x = torch.matmul(self.A, x)
+        x = self.W(x)
         return x
 
 
-
-class GraphGenerator (nn.Module):
-    """
-        Step 2 : constructs an adjacency matrix using the temporal series
-
-    """
-
-    def __init__ (self, n_points, d_model, in_hidden_size = 256, dropout = 0.2):
+class CausalityInference (nn.Module):
+    def __init__(self, n_species,
+                 f_theta, # RNN encoder
+                 g_mu, # decoder
+                 d, d_prime # embedding dimensions
+                 ):
         super().__init__()
+        self.n_species = n_species
+        self.encoder = f_theta
+        self.decoder = g_mu
+        self.gnn = CausalGNN(n_species, d, d_prime)
 
-        # nn.Linear ?
-        self.q = MLP(n_points, d_model, in_hidden_size)
-        self.k = MLP(n_points, d_model, in_hidden_size)
-        self.v = MLP(n_points, d_model, in_hidden_size)
-        self.mh = nn.MultiheadAttention(d_model, 1, dropout=dropout, batch_first=True)
+    def forward(self,
+                x): #[n_species, n_timepoints]
+        x = x.unsqueeze(-1)
+        x = self.encoder(x) # [n_species, n_timepoints, d] : embeddings des timepoints de chaque serie
+        x = x.transpose(0,1) # [n_timepoints,  n_species, d] : feature matrix at each timepoint
+        x = self.gnn(x) # [n_timepoints, n_species,d']
+        x = self.decoder(x) # [n_timepoints, n_species, 1]
+
+        x = x.transpose(0,1) # [n_species, n_timepoints]
+        return x.squeeze()
 
 
-    def forward (self, x):
-        _, w = self.mh(self.q(x), self.k(x), self.v(x))
-        return w
 
-    
-class Model (nn.Module):
-    
-    def __init__(self, n_points, n_species, hidden_size, d_model, dropout=0):
-        self.encoder = TemporalEncoder(n_points, n_species, hidden_size, dropout=dropout)
-        self.decoder = TemporalEncoder(n_species, n_points, hidde_size, dropout=dropout)
-        self.adj = GraphGenerator(n_points, d_model, hidden_size, dropout=dropout)
 
-    def forward (self, x):
-        adj = self.adj(x)
-        x = self.encoder(x)
-        x = F.relu(adj*x)
-        x = self.decoder(x)
-        return x
+
+series = torch.rand([5, 10]) # 5 species, 10 timepoints
+encoder = Encoder(5, 2) # 5 species, d=2
+decoder = nn.Linear(3,1) # d'=3
+c_mdl = CausalityInference(5, encoder, decoder, 2, 3)
+
+
 
 
