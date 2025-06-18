@@ -10,7 +10,7 @@ from graph_utils import *
 from tqdm import tqdm
 
 # Répertoires où se trouvent les fichiers de données
-FEATURES_DIR = "../tellurium/variable_timesteps_512/features"
+FEATURES_DIR = "../tellurium/variable_timesteps_12/features"
 #FEATURES_DIR = "features"
 EDGE_DIR = "edges"
 INTERACTIONS_DIR = "interactions"
@@ -299,7 +299,7 @@ if __name__ == "__main__":
 
 
 
-    torch.save(datas, "dataset_sat.pt")
+    torch.save(datas, "dataset_sat_12.pt")
     torch.save(custom_dataset, "sub_dataset_sat.pt")
     print("\n✅ Dataset sauvegardé dans 'dataset_sat.pt'")
     print("Total size =", len(datas))
