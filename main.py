@@ -11,7 +11,8 @@ import torch.optim as optim
 
 device = torch.device("cuda:0") #processeur = cpu, carte graphique = cuda
 
-x = torch.load("dataset_small.pt")
+x = torch.load("dataset_sat_100_20.pt")
+#x = torch.load("dataset_sat_12.pt")
 
 def compute_grad(model, display=False, params_list=None):
         total_grad_norm = 0.0
@@ -89,14 +90,16 @@ def fit(data, d, d_prime,
     edges = data.y
     times = data.times.to(device)
     labels = data.labels.float().to(device)
+    n_positives = labels.sum().int().item()
+    n_negatives = (len(labels) - n_positives)
     srcs = edges.transpose(0,1)[0,:]
     dsts = edges.transpose(0,1)[1,:]
     writer = SummaryWriter(comment="-1")
 
-    n_species = x.size(0)
-    encoder = Encoder(n_species, d, num_layers=num_encoder_layers, device=device)
-    decoder_causal = nn.Linear(d_prime*2,1)
-    decoder_std = nn.Linear(d_prime*2,1)
+    n_species, n_trajectories, n_points = x.size()
+    encoder = Encoder(n_trajectories, n_species, d, num_layers=num_encoder_layers, device=device)
+    decoder_causal = nn.Linear(d_prime,1)
+    decoder_std = nn.Linear(d_prime,1)
     mdl = CausalityInference(n_species, encoder, decoder_causal, decoder_std, d, d_prime,
                              edges = edges.transpose(0,1),
                              device=device)
@@ -112,12 +115,20 @@ def fit(data, d, d_prime,
 #    mdl, delta = fit_standard_loss(x, mdl, eps_tol=delta_min, writer=writer)
     delta = delta_min
 
-    
+   
 
     optimizer = torch.optim.Adam(mdl.parameters(),
                                   #list(mdl.gnn.parameters()) + list(mdl.decoder_causal.parameters()),
                                  #params_causal,
-                                 lr=1e-4)
+                                 lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',         
+        factor=0.8,         # Multiplie le LR par ce facteur
+        patience=500,        # Nb d’epochs sans amélioration avant de réduire
+        threshold=1e-5,     # Seuil de variation min pour considérer une amélioration
+        verbose=True        # Affiche les changements
+    )
 
     print(mdl.gnn.getEdges())
     for i in range(1000000000):
@@ -131,16 +142,17 @@ def fit(data, d, d_prime,
 
 
         penalty = torch.trace(torch.matrix_exp(mdl.gnn.A)) - mdl.gnn.A.shape[0]
+        loss = loss_causal + alpha*loss_std
         #loss = loss_causal + alpha*F.relu(loss_std-delta)
         #loss =  loss_causal #+ mdl.gnn.A.norm(p=2)
-        loss = loss_causal + alpha*penalty
+        #loss = loss_causal #+ alpha*penalty
 
         loss.backward()
 
         optimizer.step()
 
         loss_causal = loss_causal.detach().item()
-        loss_std = loss_std.detach().item()
+        #loss_std = loss_std.detach().item()
         loss = loss.detach().item()
 
         writer.add_scalar("epoch/loss", loss, i)
@@ -150,16 +162,39 @@ def fit(data, d, d_prime,
         grad=compute_grad(mdl)
         writer.add_scalar("epoch/phase2_grad", grad,i)
 
+        #scheduler.step(grad)
+
+        current_lr = optimizer.param_groups[0]['lr']
+        if current_lr < 1e-10:
+            print ("LR = ", current_lr)
+            break
+
         mat = mdl.gnn.getMatrix()
         coefs = mat[srcs,dsts]
 
+        _, pos_idx = mdl.gnn.getEdges().topk(n_positives)
         prediction_error = F.binary_cross_entropy(coefs, labels).detach().item()
-        writer.add_scalar("epoch/phase2_error", prediction_error,i)
+
+        pos_score = labels[pos_idx].sum()
+
+        if n_negatives != 0:
+            _, neg_idx = (-mdl.gnn.getEdges()).topk(n_negatives)
+            neg_score = n_negatives - labels[neg_idx].sum()
+
+        #writer.add_scalar("epoch/phase2_error", prediction_error,i)
+        writer.add_scalar("epoch/phase2_pos", pos_score/n_positives,i)
+        writer.add_scalar("epoch/phase2_neg", neg_score/n_negatives,i)
+        writer.add_scalar("epoch/phase2_lr", current_lr,i)
 
         if (i%50 == 0):
-            #print ("[Phase2] pred_error: ", prediction_error, " causal=", loss_causal, " grad=", grad)
+            if n_negatives != 0:
+                print (f"[Phase2] BCE={prediction_error} causal= {loss_causal} grad={grad} neg={neg_score/n_negatives} pos={pos_score/n_positives}")
+            else:
+                print (f"[Phase2] BCE={prediction_error} causal= {loss_causal} grad={grad}  pos={pos_score}")
+
+#            print ("[Phase2] pred_error: ", prediction_error, " causal=", loss_causal, " grad=", grad)
             #print ("[Phase2] Loss: ", loss, " causal=", loss_causal, " standard=", loss_std, " grad=", grad)
-            print ("[Phase2] Loss: ", prediction_error, " causal=", loss_causal, " standard=", loss_std, " grad=", grad)
+            #print ("[Phase2] Loss: ", prediction_error, " causal=", loss_causal, " standard=", loss_std, " grad=", grad)
         if grad < eps_tol:
             print ("[Done] Loss: ", loss, " causal=", loss_causal, " grad=", grad)
             return mdl
